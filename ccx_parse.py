@@ -1,24 +1,9 @@
 #!/usr/bin/env python3
-"""Shared parser for Claude Code transcripts (~/.claude/projects/<munged>/*.jsonl).
+"""Parse Claude Code transcripts into shared project timelines.
 
-See ``docs/transcript-formats.md`` for the shared parser contract and source
-record mappings.
-
-`build_timeline(project_dir)` walks every session file in a project directory and
-returns a structured view centered on *milestones* — the things the human typed —
-each annotated with the activity that followed it (tools, files, tokens, models,
-duration) and Claude's own rolling ai-title for that stretch of work.
-
-Record types seen in a transcript:
-  user       role=user. Four flavors (see classify_user): typed prompt, slash
-             command, local-command stdout, or harness injection.
-  assistant  role=assistant. content blocks: thinking / text / tool_use.
-             Carries message.model and message.usage (token counts).
-  ai-title   Claude's rolling one-line title for the current segment. No
-             timestamp; position in the file says which segment it titles.
-  system     bookkeeping; subtype=="turn_duration" carries durationMs.
-  file-history-snapshot / last-prompt / attachment / queue-operation / mode /
-  permission-mode  — not needed here.
+``build_timeline()`` is the main entry point. See
+``docs/transcript-formats.md#shared-timeline-shape-the-contract`` for the output
+schema and source-record mappings.
 """
 import glob
 import json
@@ -32,7 +17,7 @@ PROJECTS = os.path.expanduser("~/.claude/projects")
 
 
 def parse_iso(ts):
-    """ISO-8601 timestamp string -> aware datetime (or None). Normalizes a
+    """ISO-8601 timestamp string -> datetime (or None). Normalizes a
     trailing 'Z' for fromisoformat and swallows unparseable values. Shared so
     the same shim isn't reimplemented per consumer."""
     if not ts:
@@ -69,8 +54,11 @@ def _is_transcript_dir(d):
 
 
 def find_project_dir(target):
-    """Resolve a project name, repo path, or transcript dir to its
-    ~/.claude/projects subdirectory."""
+    """Resolve a project name, repo path, or explicit transcript directory.
+
+    Name and repository lookup search ``~/.claude/projects``; an explicit
+    transcript directory may be elsewhere.
+    """
     # 1. an explicit transcript directory passed directly
     if os.path.isdir(target) and _is_transcript_dir(target):
         return target
@@ -206,8 +194,8 @@ def iter_json_records(path, diagnostics=None):
 
 
 def _load_records(project_dir, paths=None, diagnostics=None):
-    """All records from all sessions, each tagged with its source file and a
-    global (file-order) sequence so ai-titles can be attributed by position."""
+    """Return ``(first timestamp, file-derived session ID, records)`` tuples
+    ordered by first timestamp; records retain their file order."""
     per_file = []
     paths = paths if paths is not None else glob.glob(os.path.join(project_dir, "*.jsonl"))
     for path in sorted(paths):
@@ -274,13 +262,9 @@ def _has_substantive_activity(activity):
 
 
 def _finalize_milestone(m, milestones):
-    """Append m to milestones, deduping its files first — but drop the session-start
-    pseudo-milestone unless it captured pre-first-prompt work, so both parsers'
-    render loops iterate the same list. Interrupted work can have tools or tokens
-    without an assistant message, so assistant-turn count alone is not enough;
-    duration alone is bookkeeping and does not prove work occurred. Shared by
-    both parsers' close()."""
+    """Deduplicate files and append the milestone unless it is an empty session boundary."""
     a = m["activity"]
+    # Duration alone is bookkeeping and does not prove substantive activity.
     if m["kind"] == "session" and not _has_substantive_activity(a):
         return
     a["files"] = sorted(set(a["files"]))
@@ -290,12 +274,8 @@ def _finalize_milestone(m, milestones):
 # --------------------------------------------------------------------------- #
 # subagent / workflow token rollup
 # --------------------------------------------------------------------------- #
-# Claude Code writes subagent (Task) and workflow transcripts to their own files
-# NESTED under the parent session: <project>/<session-id>/subagents/**/*.jsonl —
-# below the top-level *.jsonl that _load_records globs. Their token usage can dwarf
-# the main thread's (a fan-out workflow spends most of its tokens here), so leaving
-# it out understates cost by an order of magnitude. We fold each nested transcript's
-# tokens into the milestone that spawned it, keeping per-command and project cost whole.
+# Nested transcript paths fall outside _load_records's top-level glob, so token
+# attribution scans them separately.
 def _iter_subagent_transcripts(project_dir):
     """Nested subagent/workflow transcript paths under a project dir (any depth)."""
     return sorted(glob.glob(
@@ -303,11 +283,8 @@ def _iter_subagent_transcripts(project_dir):
 
 
 def _subagent_usage(path, diagnostics=None):
-    """Sum a nested transcript's per-model token usage and note when it started.
-    Returns ({model -> {in,out,cr,cc,cc1h}}, transcript_start_ts); the map is empty if the
-    transcript carried no billable assistant turns. Deduped per message.id (field-wise
-    max) exactly like the main parse — one record per content block would otherwise
-    N-count, and subagent streaming logs accumulate output across those records."""
+    """Return ``(per-model token usage, first timestamp)`` for a nested
+    transcript, taking a field-wise maximum for each message ID before summing."""
     per_msg = {}   # message.id -> [in, out, cr, cc, cc1h] field-wise max
     model_of = {}
     start = None
@@ -362,10 +339,11 @@ def _attribute_subagents(project_dir, milestones, sessions, paths=None,
                          diagnostics=None):
     """Fold nested subagent/workflow token usage into the spawning milestone.
 
-    Attribution is by time: each nested transcript's tokens go to the latest
-    milestone in its own session (the <session-id> path component) that started at
-    or before it. Coarse — a subagent's whole cost lands on one command — but it
-    never drops tokens, and it flows through _aggregate into every cost rollup."""
+    Attribution is by time: use the latest same-session milestone at or before
+    the child start. If that session has no milestone, consider every project
+    milestone; if none precedes the child, use the first candidate. The child's
+    whole usage lands on the selected milestone and flows into every cost rollup.
+    """
     if not milestones:
         return
     by_session = {}
@@ -448,13 +426,9 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
             if t == "assistant":
                 msg = r.get("message", {})
                 model = msg.get("model")
-                # Claude Code emits ONE record per content block (thinking / text /
-                # each tool_use), all sharing one message.id and repeating — or, in
-                # streamed subagent logs, accumulating toward — the SAME message.usage.
-                # Bill each message once: track the field-wise max already counted and
-                # add only the delta, so a 4-block message isn't billed 4x. Records of a
-                # message.id are contiguous, so the delta lands in the right milestone.
-                # The per-block loop below still runs every record (tools live per-block).
+                # Usage repeats per content block and can grow while streaming.
+                # Add only growth in each message's field-wise maxima; still
+                # inspect every content block for tool events.
                 mid = msg.get("id") or r.get("uuid")
                 seen = mid in msg_usage
                 prev = msg_usage.get(mid, (0, 0, 0, 0, 0))

@@ -43,14 +43,14 @@ class AccountingTests(unittest.TestCase):
             )
         # "root" is the readable fallback for the filesystem root, followed by
         # the same stable path-derived suffix used for every other project.
-        self.assertRegex(forward["/"], r"^root--[0-9a-f]{8}$")
+        self.assertRegex(forward["/"], r"^root--[0-9a-f]{64}$")
         self.assertNotEqual(
             forward["/work/a/example project"],
             forward["/work/b/example project"],
         )
         for slug in forward.values():
             self.assertRegex(slug, r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-            self.assertRegex(slug, r"--[0-9a-f]{8}$")
+            self.assertRegex(slug, r"--[0-9a-f]{64}$")
             self.assertLessEqual(len(slug), 80)
         dangerous = forward["/work/javascript:alert(1)#fragment"]
         self.assertNotIn(":", dangerous)
@@ -180,9 +180,7 @@ class AccountingTests(unittest.TestCase):
     def test_current_and_dated_anthropic_rates(self):
         self.assertEqual(pricing.PRICES["claude-sonnet-5"],
                          (2.0, 10.0, 0.2, 2.5, 4.0))
-        # Anthropic publishes the same standard input, output, cache-read,
-        # five-minute cache-write, and one-hour cache-write rates for both
-        # model identifiers currently present in the transcript archive.
+        # These two stable table entries intentionally use the same rates.
         current_opus_rates = (5.0, 25.0, 0.5, 6.25, 10.0)
         self.assertEqual(pricing.PRICES["claude-opus-4-6"], current_opus_rates)
         self.assertEqual(pricing.PRICES["claude-opus-5"], current_opus_rates)
@@ -192,6 +190,16 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(total, 1.0)
         self.assertFalse(unpriced)
         self.assertEqual(cats["in"]["tokens"], 1_000_000)
+
+    def test_each_rate_field_has_one_documented_category(self):
+        self.assertEqual(len(pricing.CATEGORY_SPECS), 5)
+        self.assertEqual(len(pricing.CATEGORIES), 5)
+        for rates in pricing.PRICES.values():
+            self.assertEqual(len(rates), len(pricing.CATEGORY_SPECS))
+        for key, label, help_text in pricing.CATEGORY_SPECS:
+            self.assertTrue(key)
+            self.assertTrue(label)
+            self.assertTrue(help_text)
 
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {

@@ -8,11 +8,23 @@ import unittest
 from ccx_parse import _has_substantive_activity, _new_activity, _timeline_dict
 from codex_parse import (_parse_rollout, build_codex_timelines,
                          build_history_only_timelines)
-from generate_site import _group_codex_timelines, _merge_timelines, render
+from generate_site import (RECOVERED_PROMPT_EXPLANATION, _group_codex_timelines,
+                           _merge_timelines, render, render_index)
 
 
 def _record(ts, record_type, payload):
     return {"timestamp": ts, "type": record_type, "payload": payload}
+
+
+def _token_count(ts, total_input, cached_input, output):
+    return _record(ts, "event_msg", {
+        "type": "token_count",
+        "info": {"total_token_usage": {
+            "input_tokens": total_input,
+            "cached_input_tokens": cached_input,
+            "output_tokens": output,
+        }},
+    })
 
 
 class CodexTokenParsingTests(unittest.TestCase):
@@ -41,20 +53,14 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:02.000Z", "event_msg", {
                 "type": "user_message", "message": "run it"}),
             # input_tokens includes the 70 cached tokens, leaving 30 fresh.
-            _record("2026-07-20T00:00:03.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            _token_count("2026-07-20T00:00:03.000Z", 100, 70, 10),
             # A rate-limit-only event must not reset this nonzero baseline.
             _record("2026-07-20T00:00:04.000Z", "event_msg", {
                 "type": "token_count", "info": None}),
             # The next snapshot adds 20 cached + 10 fresh input and 2 output.
-            _record("2026-07-20T00:00:05.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 130, "cached_input_tokens": 90, "output_tokens": 12}}}),
+            _token_count("2026-07-20T00:00:05.000Z", 130, 90, 12),
             # Rate-limit refreshes can repeat an unchanged cumulative snapshot.
-            _record("2026-07-20T00:00:06.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 130, "cached_input_tokens": 90, "output_tokens": 12}}}),
+            _token_count("2026-07-20T00:00:06.000Z", 130, 90, 12),
             _record("2026-07-20T00:00:07.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]
@@ -121,6 +127,7 @@ class CodexTokenParsingTests(unittest.TestCase):
         page = render(_merge_timelines(grouped[project_path]))
 
         self.assertIn('Hide automated Codex sessions', page)
+        self.assertIn('(activity stays in project totals)', page)
         self.assertEqual(page.count('<section class="session-block" data-automated>'), 2)
         self.assertIn('>codex exec</span>', page)
         self.assertIn('>subagent</span>', page)
@@ -133,6 +140,40 @@ class CodexTokenParsingTests(unittest.TestCase):
             '<span id="heroSessionLabel">session</span>', page)
         # All three $5 sessions remain in the project summary while two are hidden.
         self.assertIn('<div class="n">$15</div>', page)
+
+    def test_subagent_only_timeline_is_not_a_canonical_checkout(self):
+        repository = "https://example.com/example-project.git"
+
+        def timeline(session_id, path, originator, is_subagent):
+            session = {
+                "id": session_id,
+                "last_ts": "2026-07-20T00:00:01.000Z",
+                "title": None,
+                "tool": "codex",
+                "originator": originator,
+                "repository_url": repository,
+                "is_subagent": is_subagent,
+                "subagent_label": None,
+                "parent_session_id": None,
+                "parent_relation": None,
+            }
+            milestone = {
+                "kind": "session",
+                "text": None,
+                "ts": "2026-07-20T00:00:00.000Z",
+                "session": session_id,
+                "activity": _new_activity(),
+            }
+            milestone["activity"]["assistant_turns"] = 1
+            return _timeline_dict(
+                "/tmp/codex", path, [session], [milestone], Counter())
+
+        subagent = timeline("subagent", "/tmp/child", "codex-tui", True)
+        exec_run = timeline("exec", "/tmp/exec", "codex_exec", False)
+
+        grouped = _group_codex_timelines([subagent, exec_run])
+
+        self.assertEqual(set(grouped), {"/tmp/child", "/tmp/exec"})
 
     def test_history_only_prompts_render_as_recovered_prompt_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -180,14 +221,15 @@ class CodexTokenParsingTests(unittest.TestCase):
                          ["recovered", "recovered"])
 
         page = render(timeline)
+        index = render_index([("repo", timeline)], source_label="synthetic")
         self.assertIn('>recovered</span>', page)
         self.assertIn('compare the two approaches', page)
         self.assertIn('which one would you choose?', page)
         self.assertNotIn('/status', page)
-        self.assertIn(
-            'Prompt recovered from Codex history because no rollout was found.',
-            page,
-        )
+        self.assertEqual(page.count(RECOVERED_PROMPT_EXPLANATION), 4)
+        self.assertIn('<footer>2 inputs typed', page)
+        self.assertIn('<div class="n">2</div><div class="l lbl">inputs typed</div>', index)
+        self.assertIn('<b>2</b> inputs', index)
         self.assertEqual(page.count(
             '<section class="session-block" data-automated>'), 0)
 
@@ -199,14 +241,10 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:02.000Z", "event_msg", {
                 "type": "user_message", "message": "first model"}),
             # GPT-5.5 contributes 70 cached + 30 fresh input tokens.
-            _record("2026-07-20T00:00:03.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            _token_count("2026-07-20T00:00:03.000Z", 100, 70, 10),
             _record("2026-07-20T00:00:04.000Z", "turn_context", {"model": "gpt-5.4"}),
             # The global counter rises by 60 input, including 30 cached, plus 10 output.
-            _record("2026-07-20T00:00:05.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 160, "cached_input_tokens": 100, "output_tokens": 20}}}),
+            _token_count("2026-07-20T00:00:05.000Z", 160, 100, 20),
             _record("2026-07-20T00:00:06.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]
@@ -228,9 +266,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:02.000Z", "event_msg", {
                 "type": "user_message", "message": "agent assignment"}),
             # Independent child counters start at zero: 40 cached + 10 fresh.
-            _record("2026-07-20T00:00:03.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _token_count("2026-07-20T00:00:03.000Z", 50, 40, 5),
             _record("2026-07-20T00:00:04.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]
@@ -254,9 +290,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:00.902Z", "turn_context", {"model": "gpt-5.5"}),
             _record("2026-07-20T00:00:00.903Z", "event_msg", {
                 "type": "user_message", "message": "copied human prompt"}),
-            _record("2026-07-20T00:00:00.904Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100}}}),
+            _token_count("2026-07-20T00:00:00.904Z", 1000, 800, 100),
             # This started_at is from the parent's past and remains replay data.
             _record("2026-07-20T00:00:00.905Z", "event_msg", {
                 "type": "task_started", "started_at": 1784505599}),
@@ -267,9 +301,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:01.200Z", "event_msg", {
                 "type": "user_message", "message": "child assignment"}),
             # Only this 60/10/20 increment belongs to the child: 40 fresh input.
-            _record("2026-07-20T00:00:02.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 1060, "cached_input_tokens": 820, "output_tokens": 110}}}),
+            _token_count("2026-07-20T00:00:02.000Z", 1060, 820, 110),
             _record("2026-07-20T00:00:03.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]
@@ -292,17 +324,13 @@ class CodexTokenParsingTests(unittest.TestCase):
                 # Exercise the thread_source encoding by itself.
                 "thread_source": "subagent", "forked_from_id": "parent"}),
             # Parent replay establishes a nonzero baseline that must be excluded.
-            _record("2026-07-20T00:00:00.100Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100}}}),
+            _token_count("2026-07-20T00:00:00.100Z", 1000, 800, 100),
             _record("2026-07-20T00:00:00.200Z", "event_msg", {
                 "type": "task_started", "started_at": 1784505600}),
             _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
             # The task was interrupted after a model call, before any assistant message.
             # Its 80 cached + 10 fresh input tokens must still reach the total.
-            _record("2026-07-20T00:00:02.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 1090, "cached_input_tokens": 880, "output_tokens": 104}}}),
+            _token_count("2026-07-20T00:00:02.000Z", 1090, 880, 104),
         ]
 
         _, _, milestones, _, _ = self.parse(records)
@@ -321,9 +349,7 @@ class CodexTokenParsingTests(unittest.TestCase):
                 "type": "task_started", "started_at": 1784505601}),
             _record("2026-07-20T00:00:01.100Z", "turn_context", {"model": "gpt-5.5"}),
             # The first task contributes 40 cached + 10 fresh input tokens.
-            _record("2026-07-20T00:00:04.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _token_count("2026-07-20T00:00:04.000Z", 50, 40, 5),
             _record("2026-07-20T00:00:05.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "first done"}]}),
             # Reuse after a 95-second idle gap; v2 emits no user_message here.
@@ -331,9 +357,7 @@ class CodexTokenParsingTests(unittest.TestCase):
                 "type": "task_started", "started_at": 1784505700}),
             _record("2026-07-20T00:01:40.100Z", "turn_context", {"model": "gpt-5.5"}),
             # The second task contributes 20 cached + 10 fresh input tokens.
-            _record("2026-07-20T00:01:42.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 80, "cached_input_tokens": 60, "output_tokens": 8}}}),
+            _token_count("2026-07-20T00:01:42.000Z", 80, 60, 8),
             _record("2026-07-20T00:01:43.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "second done"}]}),
         ]
@@ -408,9 +432,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:03.000Z", "event_msg", {
                 "type": "patch_apply_end", "changes": {"/repo/result.txt": {}}}),
             # Zero-turn interrupted work still produced 80 cached + 10 fresh tokens.
-            _record("2026-07-20T00:00:04.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 90, "cached_input_tokens": 80, "output_tokens": 4}}}),
+            _token_count("2026-07-20T00:00:04.000Z", 90, 80, 4),
         ]
 
         page = render(self.timeline(records))
@@ -443,9 +465,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:00:02.000Z", "event_msg", {
                 "type": "user_message", "message": "human prompt"}),
             # Root contributes 70 cached + 30 fresh input tokens.
-            _record("2026-07-20T00:00:03.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            _token_count("2026-07-20T00:00:03.000Z", 100, 70, 10),
             _record("2026-07-20T00:00:04.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]
@@ -457,9 +477,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             _record("2026-07-20T00:01:02.000Z", "event_msg", {
                 "type": "user_message", "message": "agent assignment"}),
             # Child contributes 40 cached + 10 fresh input tokens.
-            _record("2026-07-20T00:01:03.000Z", "event_msg", {
-                "type": "token_count", "info": {"total_token_usage": {
-                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _token_count("2026-07-20T00:01:03.000Z", 50, 40, 5),
             _record("2026-07-20T00:01:04.000Z", "response_item", {
                 "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
         ]

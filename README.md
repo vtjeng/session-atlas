@@ -60,9 +60,9 @@ styles and scripts, so it works without a web server or network connection.
 > assistant-response excerpts, local paths, shell commands, file names, Git
 > branches, model identifiers, and usage data. Review them before sharing.
 
-By default, the scripts read live transcripts from your home directory, access
-those files and any archives through filesystem paths, write all output
-locally, and do not upload source data.
+By default, the scripts read live transcripts and Codex history and diagnostics
+from your home directory, access those files and any selected archive through
+filesystem paths, write all output locally, and do not upload source data.
 
 Git ignores `site/` and `archive/`. A normal clone therefore contains the
 source code, tests, documentation, and optional systemd units, but it does not
@@ -135,13 +135,12 @@ source.
 
 ### Refresh automatically with systemd
 
-The units in `systemd/user/` can refresh `site/` every ten minutes on a Linux
-system that runs user-level systemd. Other platforms require a different
-scheduler.
-
-The supplied service assumes that the checkout is at `~/src/session-atlas` and
-Python is at `/usr/bin/python3`. Edit `WorkingDirectory` and `ExecStart` in
-`systemd/user/session-atlas-render.service` if either path differs.
+The optional units in `systemd/user/` refresh `site/` on the schedule defined by
+`session-atlas-render.timer` on Linux systems with user-level systemd. Other
+platforms require another scheduler. Before linking the units, inspect
+`WorkingDirectory` and `ExecStart` in `session-atlas-render.service`. Set them
+for this checkout and its Python 3 interpreter, and add any nondefault `--out`
+or `--archive` options.
 
 Install and start the timer from the repository root:
 
@@ -164,8 +163,9 @@ systemctl --user status session-atlas-render.service
 Generated project and index pages show their refresh time in the header and
 footer.
 
-The timer renders the site but does not archive transcripts. Schedule
-`archive_transcripts.py` separately if you need automatic retention.
+The supplied timer renders only. Automatic archiving is a separate opt-in
+because archived copies can outlive source cleanup. Configure an archive job
+using the destination and privacy procedure below.
 
 ### Archive transcripts
 
@@ -176,17 +176,14 @@ rollout files when source files might be cleaned up or a tool reinstalled:
 python3 archive_transcripts.py
 ```
 
-The default command creates a retention-oriented local mirror under `archive/`.
-It never deletes an archived session. When a source file grows, the command
-atomically replaces the archived copy with the larger file. It keeps the
-archived copy when the source is smaller. It also sets archive directories to
-owner-only mode `0700` and archived files to owner-only mode `0600`.
-
-This behavior is not a deletion or redaction workflow. In particular,
-shortening or removing a source transcript does not remove the fuller archived
-copy. An audited replacement and deletion workflow remains a TODO. Until that
-exists, remove sensitive archived data deliberately and account for every copy
-and backup that may retain it.
+By default, `archive_transcripts.py` writes a retention archive under
+`archive/`. It copies new or larger source files atomically, never deletes an
+archived session, and never replaces a fuller archived copy with a smaller
+source. Archive directories use owner-only mode `0700`, and files use `0600`.
+This is not a redaction workflow, and the command provides no automated
+replacement or deletion operation. To remove sensitive data, stop scheduled
+archiving, remove or redact the live source, then deliberately remove every
+archive and backup copy before resuming.
 
 A local mirror does not protect against disk or machine loss. Write the archive
 to storage that is backed up or mounted from another device when you need that
@@ -202,6 +199,10 @@ mounted storage. Pass the same path when rendering:
 ```bash
 python3 generate_site.py --all --archive /mnt/backup/session-atlas
 ```
+
+For timer-driven renders, add the same `--archive` value to `ExecStart` in
+`session-atlas-render.service` and run `systemctl --user daemon-reload`.
+Otherwise, the service continues to use `generate_site.py`'s CLI default.
 
 `generate_site.py --all` reads the union of live transcripts and the selected
 archive root, then deduplicates sessions. The archive can contain private data.
@@ -228,52 +229,28 @@ parser warns with the file and line number, skips that record, and continues.
 Generated project pages and index cards show the number of skipped records so a
 partial render is not mistaken for a complete one.
 
+### Inspect Codex CLI statistics
+
+`codex_parse.py` prints one summary row per discovered Codex project, followed
+by the project count and parse time:
+
+```bash
+python3 codex_parse.py
+```
+
 ## Reference
 
 ### Input classification
 
-The parsers distinguish text that you typed from records inserted by the CLI or
-created by a child agent. A child agent, also called a subagent, is an agent
-started by the main session to perform part of a task.
-
-#### Claude Code
-
-Claude Code stores each session as JSONL under
-`~/.claude/projects/<munged-cwd>/<session-uuid>.jsonl`. The munged directory
-name replaces each `/` in the project path with `-`.
-
-In these files, a record with `role: user` can represent several kinds of data:
-
-| Record | Classification | Reason |
-| --- | --- | --- |
-| Free-text prompt | The parser records it as `prompt`. | You typed it. |
-| Slash command such as `/goal ...` | The parser records it as `command`. | You typed it. |
-| `<local-command-stdout>` | The parser excludes it. | It is command output. |
-| `isMeta`, `tool_result`, `<task-notification>`, `<system-reminder>`, or `[Request interrupted]` | The parser excludes it. | The CLI inserted it. |
-| `isSidechain` | The parser excludes it. | It belongs to a child agent. |
-
-`classify_user()` in `ccx_parse.py` implements this classification.
-
-#### Codex CLI
-
-Codex CLI stores sessions under
-`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. The parser treats `event_msg`
-records whose payload type is `user_message` as inputs, except in child-agent
-sessions. It ignores the separate `response_item` user records because those
-records can also contain injected `AGENTS.md` instructions and environment
-context.
-
-Child-agent assignments do not count as human input, but their activity and
-token usage remain part of the project totals. A forked child transcript starts
-with copied records from its parent. The parser skips those copied records and
-then counts the child's own activity and incremental token usage after its first
-`task_started` event.
-
-When a session has no discovered rollout, session-atlas can recover its prompts
-from `~/.codex/history.jsonl` and map them to a project with
-`~/.codex/logs_2.sqlite`. The page labels these entries `recovered` because the
-available sources do not establish why the rollout is absent. Those sources do
-not contain the reply, tool activity, token usage, or cost.
+session-atlas counts free-text prompts and slash commands typed in top-level
+sessions as inputs. It also counts a Codex prompt recovered without a rollout
+as an input labeled `recovered`. It excludes CLI-injected records and
+child-agent assignments, while retaining supported child-agent activity and
+token usage in project totals. Substantive activity before the first retained
+input can appear as a non-prompt entry. Recovery sources do not contain the
+assistant reply, tool activity, token usage, or cost. See
+[Transcript formats](docs/transcript-formats.md) for source paths, record
+fields, and parser mappings.
 
 ### Timeline behavior
 
@@ -287,6 +264,13 @@ section.
 Entries use anchors such as `#s02-04`, where `02` is the session number and
 `04` is the entry number within that session. Session headings use anchors such
 as `#s02`.
+
+The sticky bar shows the current session title. Use its previous and next
+buttons, or `j` and `k`, to move between sessions. Click the project name to
+return to the top, and click the session title to jump to that session. Click
+the top ribbon to jump to the nearest timeline entry on its chronological axis.
+On wide screens, click or drag the right-hand minimap to scroll through the
+page.
 
 #### Charts and timestamps
 
@@ -304,8 +288,10 @@ runs it. Transcript timestamps are stored in UTC.
 Codex CLI sessions from temporary `codex exec` working directories are grouped
 under the interactive checkout when their Git remotes match. Project pages hide
 `codex exec` and child-agent sessions by default. The page toggle adds
-`?show-automated=1` to the URL. Project totals include these sessions whether or
-not they are visible.
+`?show-automated=1` to the URL. The filter changes the displayed session count
+and the sessions shown. Prompts, commands, recovered prompts, activity
+statistics, token totals, and estimated cost continue to include hidden
+automated sessions.
 
 #### Claude Code project paths
 
@@ -332,10 +318,10 @@ changes in cumulative `token_count` records. Because Codex does not record turn
 durations, the parser estimates active time from each input timestamp through
 the last activity record before the next input.
 
-Cost is an estimate based on the per-model list rates in `pricing.py`. The rate
-table in `pricing.py` uses input, output, cache-read, standard cache-write, and
-one-hour cache-write rates per million tokens as of the `AS_OF` date in that
-file. It excludes batch, priority, long-context, volume, and enterprise pricing.
+Cost is an estimate based on the per-model list rates in `pricing.py`. The
+expandable accounting panel explains each token category and shows the rates
+used. `pricing.py` owns the exact rates and their `AS_OF` date. The estimate
+excludes batch, priority, long-context, volume, and enterprise pricing.
 
 A dollar figure ending in `+` is partial because at least one model has no
 listed rate. The accounting panel shows each unpriced model and its token count;
@@ -360,9 +346,9 @@ npm run screenshots:install
 npm run screenshots
 ```
 
-The screenshot command builds a temporary site through the production parsers
-and renderer using only `tests/fixtures/transcripts/`. It captures that site
-without replacing text or statistics in the browser.
+`npm run screenshots` invokes `scripts/capture-readme-screenshots.sh`, the
+supported image-refresh entry point. It builds and captures only the synthetic
+fixture site described in [Privacy](#privacy).
 
 The main files have these roles:
 
@@ -371,9 +357,9 @@ The main files have these roles:
 | `generate_site.py` | Generates project pages and the all-project index. |
 | `ccx_parse.py` | `build_timeline()` resolves Claude Code projects and builds their timelines. |
 | `codex_parse.py` | `build_codex_timelines()` builds timelines from Codex CLI rollout files. |
-| `archive_transcripts.py` | Copies live transcript files into a nondeleting local archive. |
+| `archive_transcripts.py` | Implements transcript archiving and its retention policy. |
 | `pricing.py` | Applies the model rates in `estimate_cost()`. |
-| `scripts/build_screenshot_site.py` | Builds the documentation site from synthetic transcript fixtures. |
+| `scripts/capture-readme-screenshots.sh` | Runs the supported synthetic-fixture screenshot workflow. |
 | `tests/fixtures/transcripts/` | Holds invented Claude Code and Codex CLI records for parser and screenshot tests. |
 | `docs/transcript-formats.md` | Documents transcript fields and parser mappings for future parser changes. |
 

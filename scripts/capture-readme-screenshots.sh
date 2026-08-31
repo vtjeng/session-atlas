@@ -12,6 +12,5 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p docs/images
 python3 scripts/build_screenshot_site.py --out "$fixture_dir/site"
 SCREENSHOT_SITE_DIR="$fixture_dir/site" node scripts/capture-readme-screenshots.js

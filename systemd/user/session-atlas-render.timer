@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh session-atlas static site every ten minutes
+Description=Refresh session-atlas static site
 
 [Timer]
 OnBootSec=2min

@@ -2,16 +2,16 @@
 
 This reference describes the fields exercised by the sanitized fixtures under
 `tests/fixtures/transcripts/` and the parser behavior they test. Transcript
-formats can change between CLI releases. Both parsers emit the same timeline
-dict shape; `generate_site.py` renders either and merges them per repository
-path. If you change one parser's output shape, change the other parser and
-`_merge_timelines` in `generate_site.py` together.
+formats can change between CLI releases. Both parsers emit the same top-level,
+milestone, and activity fields; their session dictionaries share a base schema
+and Codex adds source-specific metadata. `generate_site.py` renders either and
+merges them per repository path.
 
 ## Shared timeline shape (the contract)
 
 ```
 timeline = {project_dir, project_name, project_path, git_branches,
-            sessions:  [{id, last_ts, title, tool: "claude"|"codex"}],
+            sessions:  [{id, last_ts, title, tool: "claude"|"codex", ...}],
             milestones:[{kind: "prompt"|"command"|"recovered"|"session", text, ts,
                          session: <session id>, activity}],
             diagnostics: [<skipped-record warning>],
@@ -20,9 +20,16 @@ activity = ccx_parse._new_activity()   # tools, tool_events(≤40), files,
                                        # tokens_*, tokens_by_model, duration_ms,
                                        # assistant_turns, models, gist, title
 ```
-Milestone = one thing the human typed + all machine work until the next one.
-A `kind:"session"` pseudo-milestone captures pre-first-prompt activity and is
-dropped unless it contains substantive activity such as tool use or tokens.
+
+Both session types contain `id`, `last_ts`, `title`, and `tool`. Codex sessions
+also contain `originator`, `repository_url`, `is_subagent`, `subagent_label`,
+`parent_session_id`, `parent_relation`, and optional `is_history_only`.
+
+A milestone is an attribution interval. `prompt`, `command`, and `recovered`
+intervals start at retained inputs; `session` intervals collect substantive
+machine activity before the first retained input or at a child-task boundary.
+Each interval owns activity until the next boundary, and empty `session`
+intervals are discarded.
 
 ## Claude Code (`~/.claude/projects/<munged-cwd>/<session-uuid>.jsonl`)
 
@@ -39,12 +46,11 @@ dropped unless it contains substantive activity such as tool use or tokens.
   tool_results, `<task-notification>`, `<system-reminder>`,
   `[Request interrupted…]`.
 - Tokens: `message.usage` (input/output/cache_read/cache_creation). CAUTION:
-  Claude Code writes ONE record per content block (thinking / text / each
-  tool_use), all sharing one `message.id` and repeating (main thread) — or, in
-  streamed subagent logs, accumulating toward — the SAME `message.usage`. Summing
-  per record N-counts a multi-block message (top-of-tree ~2–3×); `build_timeline`
-  bills each `message.id` once via a running field-wise MAX (input/cache are
-  constant across the records, output climbs in subagent streams). Preserve
+  Claude Code writes one record per content block (thinking / text / each
+  tool_use). Records for one `message.id` can repeat or accumulate usage in
+  either top-level or nested transcripts. Summing per record would count a
+  multi-block message more than once; `build_timeline` bills the running
+  field-wise maximum. Preserve
   `cache_creation.ephemeral_5m_input_tokens` and
   `ephemeral_1h_input_tokens` separately: Anthropic bills them at 1.25x and 2x
   base input respectively. Bucketed by
@@ -55,18 +61,15 @@ dropped unless it contains substantive activity such as tool use or tokens.
 - Subagents/workflows: Task and workflow transcripts are NESTED at
   `<project>/<session-id>/subagents/**/*.jsonl` (below the top-level `*.jsonl`
   `_load_records` globs), `isSidechain:true`, carrying the parent's `sessionId`.
-  Their usage is often the bulk of a fan-out's spend; `_attribute_subagents`
-  rolls each file's (deduped) tokens into the milestone that spawned it, by
-  the transcript's first timestamp, so cost isn't silently understated. If a
+  `_attribute_subagents` rolls each file's deduplicated tokens into a milestone
+  selected from the transcript's first timestamp, so cost isn't silently
+  understated. If a
   child begins after the parent snapshot read by the current render, defer it
   until the next render rather than attributing it to the preceding prompt.
   Reconcile against `/cost`, but
   note `/cost` is process-scoped and spans multiple session-ids after a `/clear`.
 - Timestamps are UTC ISO-8601; the site renders local time via
   `datetime.astimezone()`.
-- Retention: Claude Code can delete transcripts according to
-  `cleanupPeriodDays`. Use the archive when you need retention beyond the
-  source tool's cleanup window.
 
 ## Codex CLI (`~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`)
 
@@ -86,7 +89,8 @@ group by `cwd`.
   claim that the missing rollout came from `/btw` or any other specific path.
   The history sources do not contain assistant replies, tools, tokens, or cost.
 - Assistant text: `response_item` / `payload.type=="message"` /
-  `role=="assistant"` → `content[0].text`.
+  `role=="assistant"` → the first nonempty `text` field in the assistant
+  content list.
 - Tool calls: `response_item`/`function_call` — name in `.payload.name`,
   args in `.payload.arguments` (a JSON-encoded STRING; parse for `.cmd`).
   File edits: `custom_tool_call` name `apply_patch`, patch in `.payload.input`
@@ -117,39 +121,36 @@ group by `cwd`.
   session_meta.
 - No turn durations exist → active time is approximated as (last activity
   record ts − milestone ts). No session titles exist → the site falls back
-  to the first prompt.
+  to the first nonempty prompt, command, or recovered prompt.
 - Reasoning: plaintext `summary` in 0.106; ONLY `encrypted_content` from
   0.136 on (unusable — skip).
-- Perf: large rollouts are dominated by token-count, tool-output, and reasoning
-  records. `codex_parse.py` skips unused payload types by substring test before
-  `json.loads` (`_SKIP_MARKS`). Keep that guard if you add record types.
-- Retention: As of August 30, 2026, Codex has no configurable transcript TTL.
-  [openai/codex#6015](https://github.com/openai/codex/issues/6015) is the open
-  request for configurable retention.
+- `codex_parse.py` skips unused tool-output and reasoning payloads by substring
+  test before `json.loads` (`_SKIP_MARKS`). Keep that guard if you add record
+  types.
 
-## Archive & regeneration
+## Live and archived inputs
 
-- `python3 archive_transcripts.py` → append-only mirror under `./archive/`
-  (gitignored, private). It uses mode `0700` for directories and `0600` for
-  files. It copies a source only when it is larger and never lets a smaller
-  source replace a fuller copy. This is a retention workflow, not a redaction
-  workflow.
-- `generate_site.py --all` builds a per-project live/archive manifest before
-  parsing and selects the larger copy of every relative parent/subagent path.
-  This preserves a fuller archived child alongside a fuller live parent and
-  prevents duplicate JSON decoding.
-- `generate_site.py --all` reads live ∪ archive: Codex deduped per file
-  (basename, keep larger), Claude deduped per session id in
-  `_merge_timelines` (keep more milestones, then later last_ts).
+The archive mirrors these source layouts:
+
+- `archive/claude/<munged-project-dir>/<session>.jsonl`
+- `archive/claude/<munged-project-dir>/<session>/subagents/**/*.jsonl`
+- `archive/codex/YYYY/MM/DD/rollout-*.jsonl`
+
+Before parsing, an `--all` render builds live/archive manifests. For each
+Claude parent or nested-subagent relative path, and for each Codex rollout
+basename, it parses only the larger available copy. After parsing,
+`_merge_timelines` deduplicates Claude sessions by session ID, preferring more
+milestones and then later `last_ts`. See
+[Archive transcripts](../README.md#archive-transcripts) for commands,
+retention, privacy, and recovery.
 
 ## Verify after parser changes
 
 ```bash
-python3 -m unittest tests.test_transcript_fixtures -v
+python3 -m unittest tests.test_codex_parse tests.test_accounting tests.test_transcript_fixtures -v
 python3 scripts/build_screenshot_site.py --out /tmp/session-atlas-fixture-site
-npm run screenshots
 ```
 
-The fixture builder and screenshot command must read only the sanitized,
-committed transcript fixtures. Use local transcripts only for deliberate,
-private investigations.
+Run these focused checks only with the sanitized committed fixtures. See
+[Development](../README.md#development) for the public screenshot-refresh
+procedure.

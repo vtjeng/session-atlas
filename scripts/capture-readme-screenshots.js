@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { chromium } = require('playwright');
@@ -17,17 +18,18 @@ const CAPTURE_PADDING = 24;
     viewport: { width: 1440, height: 900 },
     javaScriptEnabled: false,
   });
+  fs.mkdirSync(imageDir, { recursive: true });
 
-  const requireElement = async (selector, description) => {
-    const element = page.locator(selector).first();
-    if (await element.count() !== 1) {
+  const requireFirstElement = async (selector, description) => {
+    const locator = page.locator(selector);
+    if (await locator.count() === 0) {
       throw new Error(`Generated fixture page is missing ${description}: ${selector}`);
     }
-    return element;
+    return locator.first();
   };
 
   const capture = async (selector, description, filename) => {
-    const element = await requireElement(selector, description);
+    const element = await requireFirstElement(selector, description);
     // Preserve the element's exact raster, then add neutral space around it on
     // a second page. PNG stores pixel width and height at byte offsets 16 and 20.
     const raw = await element.screenshot();
@@ -82,7 +84,7 @@ const CAPTURE_PADDING = 24;
       'timeline-entry.png',
     );
 
-    const pricing = await requireElement('details.pricing', 'the cost breakdown');
+    const pricing = await requireFirstElement('details.pricing', 'the cost breakdown');
     await pricing.evaluate(node => { node.open = true; });
     await capture(
       '.pricing-body .tw',

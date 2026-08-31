@@ -11,7 +11,7 @@ The fixed values exercise these parser paths:
   fixture site must merge their sessions into one project.
 - `/home/demo/src/docs-site` appears only in Claude Code so the project index
   includes both a mixed-source project and a single-source project.
-- March 15 timestamps keep the documentation images on one compact date range.
+- March 12–15 timestamps keep the documentation images within one compact four-day range.
 - Supported model identifiers and invented agentic-session token counts produce
   a visible multi-dollar cost estimate without reproducing local usage totals.
 - `main`, `https://example.com/`, and repeated UUID digits are recognizable

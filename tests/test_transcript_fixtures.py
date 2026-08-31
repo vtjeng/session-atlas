@@ -51,6 +51,20 @@ class TranscriptFixtureTests(unittest.TestCase):
                 completed.stdout,
             )
 
+            with open(os.path.join(site, "index.html"), encoding="utf-8") as fh:
+                index = fh.read()
+            for fixture_name in ("example-project", "docs-site"):
+                fixture_project_path = f"/home/demo/src/{fixture_name}"
+                fixture_project_slug = _allocate_project_slugs(
+                    [fixture_project_path])[fixture_project_path]
+                self.assertIn(
+                    f'<a class="proj" href="{fixture_project_slug}/index.html">',
+                    index,
+                )
+            # The Claude-only docs-site card has one input and one changed file.
+            self.assertIn('<b>1</b> input</span>', index)
+            self.assertIn('<b>1</b> file</span>', index)
+
             rendered_pages = []
             for root, _, files in os.walk(site):
                 for filename in files:
@@ -60,10 +74,6 @@ class TranscriptFixtureTests(unittest.TestCase):
                             os.path.join(root, filename), encoding="utf-8") as fh:
                         rendered_pages.append(fh.read())
             rendered = "\n".join(rendered_pages)
-            # These two names are the only fixture projects and prove both the
-            # mixed-source and Claude-only cards reached the rendered index.
-            self.assertIn("example-project", rendered)
-            self.assertIn("docs-site", rendered)
             # The synthetic home must replace the machine's actual home in the
             # source label and every transcript-derived project page.
             self.assertIn("/home/demo/", rendered)
@@ -75,7 +85,7 @@ class TranscriptFixtureTests(unittest.TestCase):
             self.assertIn("58.0k", rendered)
             self.assertIn("~<b>$3</b>", rendered)
 
-    def test_claude_fixture_matches_the_shared_timeline_contract(self):
+    def test_claude_fixture_statistics(self):
         # The example-project fixture contains one prompt and one slash command
         # so both human-input classifications run through the real JSONL parser.
         project_dir = os.path.join(
@@ -102,7 +112,7 @@ class TranscriptFixtureTests(unittest.TestCase):
             ],
         )
 
-    def test_codex_fixture_matches_the_shared_timeline_contract(self):
+    def test_codex_fixture_statistics(self):
         # The single Codex rollout contributes one prompt, two tool calls, and
         # one changed file without relying on a developer's local sessions.
         paths = rollout_paths(os.path.join(FIXTURES, "codex"))
@@ -123,6 +133,23 @@ class TranscriptFixtureTests(unittest.TestCase):
             timeline["stats"]["files_changed"],
             ["/home/demo/src/example-project/tests/test_cache.py"],
         )
+
+    def test_parser_outputs_share_the_documented_timeline_schema(self):
+        claude_dir = os.path.join(
+            FIXTURES, "claude", "-home-demo-src-example-project")
+        claude = build_timeline(claude_dir)
+        codex = build_codex_timelines(
+            rollout_paths(os.path.join(FIXTURES, "codex")))[0]
+
+        self.assertEqual(set(claude), set(codex))
+        self.assertEqual(
+            set(claude["milestones"][0]), set(codex["milestones"][0]))
+        self.assertEqual(
+            set(claude["milestones"][0]["activity"]),
+            set(codex["milestones"][0]["activity"]),
+        )
+        self.assertLessEqual(
+            set(claude["sessions"][0]), set(codex["sessions"][0]))
 
     def test_malformed_record_warns_and_marks_the_render_partial(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a static timeline site from Claude Code and Codex CLI transcripts.
 
-    python3 generate_site.py example-project                 # -> ./site/<name>/index.html
+    python3 generate_site.py example-project                 # -> ./site/<stable-slug>/index.html
     python3 generate_site.py /path/to/project --out ./out    # by path, custom out dir
     python3 generate_site.py --all                           # every project + index page
 
@@ -26,6 +26,7 @@ import tempfile
 import unicodedata
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity,
                        _is_transcript_dir, _iter_subagent_transcripts,
@@ -37,6 +38,12 @@ from codex_parse import (CODEX_SESSIONS, build_codex_timelines,
 import pricing
 
 GENERATOR_META = '<meta name="generator" content="session-atlas">'
+PAGE_PROVENANCE = "generated from local transcripts"
+RECOVERED_PROMPT_EXPLANATION = (
+    "This prompt was recovered from Codex history because no rollout was found. "
+    "The available sources do not contain the assistant reply, tool activity, "
+    "token usage, or cost."
+)
 _SAFE_PROJECT_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_PROJECT_SLUG = 80
 
@@ -83,16 +90,9 @@ def _allocate_project_slugs(project_paths):
     used = set()
     for path in paths:
         base = bases[path]
-        candidate = _hashed_project_slug(base, path, 8)
+        candidate = _hashed_project_slug(base, path, 64)
         if candidate.casefold() in used:
-            # An eight-digit digest collision is unlikely, but extending only
-            # the colliding path keeps the common case short and deterministic.
-            for digest_length in range(12, 65, 4):
-                candidate = _hashed_project_slug(base, path, digest_length)
-                if candidate.casefold() not in used:
-                    break
-            else:
-                raise ValueError(f"Could not allocate a unique project slug for {path!r}")
+            raise ValueError(f"Could not allocate a unique project slug for {path!r}")
         used.add(candidate.casefold())
         allocated[path] = candidate
     return allocated
@@ -316,7 +316,7 @@ def _breakdown_table(by_model, scope):
 
 
 def cost_method_html(by_model, scope):
-    """Expandable footer panel: how est. cost is computed, this page's breakdown, rates."""
+    """Expandable pricing panel in the page hero: computation, breakdown, and rates."""
     _, _, unpriced = pricing.cost_breakdown(by_model or {})
     cat_labels = [label for _, label in pricing.CATEGORIES]
     rate_rows = []
@@ -331,22 +331,17 @@ def cost_method_html(by_model, scope):
     if unpriced:
         excl = (f'<p class="excl">Excluded (no rate): {esc(", ".join(unpriced))}. '
                 f'Add them to <code>pricing.py</code> to include their cost.</p>')
+    category_help = "".join(
+        f'<p><b>{esc(label)}:</b> {esc(help_text)}</p>'
+        for _, label, help_text in pricing.CATEGORY_SPECS
+    )
     return (
         '<details class="pricing"><summary>How is est. cost estimated?</summary>'
         '<div class="pricing-body">'
         "<p>Each model's tokens are multiplied by its list rate and summed. Tokens "
         "are attributed to the model that produced them, so a project that mixes "
-        "models is priced correctly. Cache-read and cache-write tokens are included "
-        "&mdash; on cached agent runs they usually dwarf fresh input and output.</p>"
-        "<p>Across vendors the <b>input</b> and cache columns aren't comparable. "
-        "Anthropic's <b>input</b> is only the uncached residual &mdash; new context is "
-        "billed once as <b>cache write</b> (1.25&times; for 5m, 2&times; for 1h) "
-        "then as <b>cache read</b> "
-        "(0.1&times;), so a Claude row's input stays tiny. GPT-5.6 also bills cache "
-        "writes at 1.25&times; input, but Codex rollouts don't report cache-write "
-        "tokens; fresh tokens land in <b>input</b> and the re-sent prefix in "
-        "<b>cache read</b> (usually the largest bucket). Older GPT models have no "
-        "separate cache-write charge.</p>"
+        "models is priced correctly. Cache-read and cache-write tokens are included.</p>"
+        f'{category_help}'
         f"<p>Rates are standard published list prices per 1M tokens, as of "
         f"<b>{esc(pricing.AS_OF)}</b>: no batch, priority, or long-context tiers and "
         "no volume/enterprise discounts, so read totals as an order-of-magnitude "
@@ -387,7 +382,7 @@ def model_family(m):
 
 
 def mag(m):
-    """Per-input 'work magnitude': active time if timed, else tokens out."""
+    """Per-entry 'work magnitude': active time if timed, else tokens out."""
     return m["activity"]["duration_ms"] or m["activity"]["tokens_out"]
 
 
@@ -397,7 +392,7 @@ def _sc_var(num):
 
 
 def _stat_cards_html(cards):
-    """Hero stat grid shared by the project page and the index shelf.
+    """Hero stat grid shared by the project page and the index-page hero.
 
     Each card is ``(number, label)`` or ``(number, label, tooltip)``.
     """
@@ -423,6 +418,11 @@ def _is_automated_codex(session):
     return _is_codex_exec(session) or session.get("is_subagent", False)
 
 
+def _input_count(stats):
+    """Return prompt, command, and recovered-prompt inputs."""
+    return stats["prompts"] + stats["commands"] + stats.get("recovered_prompts", 0)
+
+
 def _timeline_repository(tl):
     """Dominant Git remote recorded by a Codex timeline, if any."""
     urls = [s.get("repository_url") for s in tl["sessions"] if s.get("repository_url")]
@@ -439,7 +439,7 @@ def _group_codex_timelines(timelines):
     """
     canonical = {}
     for tl in timelines:
-        if not any(not _is_codex_exec(s) for s in tl["sessions"]):
+        if not any(not _is_automated_codex(s) for s in tl["sessions"]):
             continue
         repository = _timeline_repository(tl)
         if not repository:
@@ -470,9 +470,9 @@ def _eyebrow(tools):
 
 # --------------------------------------------------------------- rendering -- #
 # Design language: two voices on a time spine. Everything the human typed is
-# serif with a session-colored square marker; everything the machine did is mono
-# in steel, inside recessed readout panels. Colors run on three axes kept
-# distinct: vendor (--claude orange / --codex green, semantic & reserved),
+# serif with a session-colored square marker; machine activity is mono inside
+# recessed readout panels, with steel-colored accents. Colors run on three axes
+# kept distinct: vendor (--claude orange / --codex green, semantic & reserved),
 # session identity (--s1..s8, an 8-hue cycle avoiding the vendor hues), and
 # voice (--human amber / --machine steel). Bars validated for CVD + contrast.
 CSS = """
@@ -480,9 +480,7 @@ CSS = """
   --bg:#15171b; --panel:#1b1e25; --panel2:#232730; --line:#2a2f39; --spine:#333a46;
   --ink:#e9e6df; --dim:#9aa1ac; --faint:#6b727e;
   --human:#e3b25c; --machine:#8fc1e0; --bar:#468cc6;
-  /* session-identity cycle: an 8-hue ramp (blue/violet/rose/teal/orchid/
-     periwinkle/wine/cyan) that mostly avoids the vendor hues (--claude orange,
-     --codex green) so a session rarely reads as a tool */
+  /* session-identity hue cycle */
   --s1:#468cc6; --s2:#9d7cc9; --s3:#c26787; --s4:#4fb0a4;
   --s5:#cf83c0; --s6:#6f86d8; --s7:#b95c74; --s8:#57c0d0;
   --claude:#d98a5c; --codex:#57b08a;
@@ -547,7 +545,7 @@ button{font:inherit;color:inherit}
 .rdate{flex:0 0 auto;font-size:9px;color:var(--faint);white-space:nowrap}
 .rtrack{position:relative;flex:1 1 auto;height:16px;cursor:pointer}
 .rtrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}
-/* faint per-message dots: where a session's activity actually fell (spread + density) */
+/* faint per-entry dots: where a session's activity actually fell (spread + density) */
 .etick{position:absolute;top:50%;width:3px;height:3px;border-radius:50%;
   transform:translate(-50%,-50%);background:var(--sc,var(--bar));opacity:.4;pointer-events:none}
 .sdot{position:absolute;top:50%;width:8px;height:8px;padding:0;border-radius:50%;
@@ -562,7 +560,7 @@ button{font:inherit;color:inherit}
   transform:translate(-50%,-50%);background:var(--ink);box-shadow:0 0 0 2px var(--bg)}
 
 /* ---- vertical minimap (right rail): y = document position, so it maps 1:1
-   to scrolling; session color blocks, per-input activity ticks, and a moving
+   to scrolling; session color blocks, per-entry activity ticks, and a moving
    viewport window. Drag/click anywhere on it to scrub. ---- */
 .minimap{position:fixed;top:0;right:0;bottom:0;width:48px;z-index:20;
   display:flex;flex-direction:column;box-sizing:border-box;padding:6px 0;cursor:pointer;
@@ -732,8 +730,8 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing th:first-child,.pricing td:first-child{text-align:left}
 .pricing thead th{color:var(--faint);font-weight:600;border-top:none;
   font-size:10px;letter-spacing:.03em}
-/* shared fixed-column grid (via colgroup) so the token-type, by-model, and rate
-   tables line up column-for-column — notably "cost" under "total" on the right */
+/* fixed-column grid shared by the cost and token-count matrices; the rate
+   table reuses their model and token-category widths but omits the total column */
 .pricing table.grid{table-layout:fixed;width:auto}
 .pricing table.grid col{width:90px}
 .pricing table.grid col.cm{width:124px}
@@ -795,9 +793,9 @@ if(heroSessionLabel) heroSessionLabel.textContent=sessions.length===1?'session':
 const docTop=el=>el.getBoundingClientRect().top+window.scrollY;
 const docH=()=>document.documentElement.scrollHeight||1;
 
-// current input at the top of the readable area, just under the sticky header:
-// it stays current until it scrolls completely up out of view, then the next
-// one takes over. Drives the URL anchor and the ribbon playhead.
+// The current entry is the latest one whose top has crossed the reading line,
+// defaulting to the first before any one crosses. It changes when the next
+// entry crosses the line and drives the URL anchor and ribbon playhead.
 const topbar=document.querySelector('.topbar');
 const entrySM=entries.length?parseFloat(getComputedStyle(entries[0]).scrollMarginTop)||0:0;
 const headOff=()=>topbar?topbar.getBoundingClientRect().bottom:entrySM;  // reading-line offset
@@ -835,7 +833,7 @@ function buildMap(){
     b.style.top=(top/H*100)+'%'; b.style.height=Math.max(0,(bot-top)/H*100)+'%';
     b.style.background=sessColor(n); track.appendChild(b);
   });
-  entries.forEach(e=>{                             // one tick per input, length=work
+  entries.forEach(e=>{                             // one tick per entry, length=work
     const n=parseInt(e.id.slice(1),10)||1;
     const w=parseFloat(e.dataset.w)||0;
     const t=document.createElement('div'); t.className='mm-tick';
@@ -926,17 +924,17 @@ function scrollToY(y,n){                    // glide to y and pin the counter to
 function jumpToEntry(el){                   // bring an entry to the reading line, pinning its session
   const header=el.closest('.session-block')?.querySelector('.sess');
   scrollToY(docTop(el)-headOff(),Math.max(0,sessions.indexOf(header))); }
-// ribbon: click the strip -> nearest input in time (active for a single session too)
+// ribbon: click the strip -> nearest entry in time (active for a single session too)
 const rtrack=document.getElementById('rtrack');
 if(rtrack) rtrack.addEventListener('click',e=>{
-  if(e.target.closest('.sdot')) return;              // dots handle their own clicks
+  if(e.target.closest('.sdot')) return;              // session-dot clicks do not scrub the strip
   const r=rtrack.getBoundingClientRect(); if(!r.width) return;
   const p=Math.max(0,Math.min(100,(e.clientX-r.left)/r.width*100));
   let best=null,bd=Infinity;
   for(const el of entries){ const d=Math.abs(parseFloat(el.dataset.rf)-p); if(d<bd){bd=d;best=el;} }
   if(best) jumpToEntry(best);
 });
-// timeline markers/clocks -> smooth, no flicker
+// timeline markers/clocks -> smooth navigation, or immediate with reduced motion; no flicker
 const logEl=document.querySelector('.log');
 if(logEl) logEl.addEventListener('click',e=>{
   const a=e.target.closest('a[href^="#"]'); if(!a) return;
@@ -1059,9 +1057,9 @@ def render(tl, home=None, refreshed_at=None):
         g["files"].update(a["files"])
         merge_token_models(g["by_model"], a.get("tokens_by_model"))
 
-    # session display title: Claude's session summary, else the first prompt
-    # (Codex has no titles). Shared by the log header, the sticky crumb, and each
-    # entry's data-t so the crumb can show the current session's title on scroll.
+    # session display title: Claude's session summary, else the first non-empty
+    # prompt, command, or recovered prompt. Shared by the log header and sticky
+    # crumb; each session header stores it in data-t for scroll tracking.
     sess_by_id = {x["id"]: x for x in tl["sessions"]}
 
     def session_title(sid):
@@ -1081,7 +1079,7 @@ def render(tl, home=None, refreshed_at=None):
         badge = ""
         if session.get("is_history_only"):
             badge = ('<span class="origintag t-recovered" '
-                     'title="prompt recovered from Codex history; no rollout was found">'
+                     f'title="{esc(RECOVERED_PROMPT_EXPLANATION)}">'
                      'recovered</span>')
         elif session.get("is_subagent"):
             badge = '<span class="origintag" title="spawned Codex subagent">subagent</span>'
@@ -1108,21 +1106,23 @@ def render(tl, home=None, refreshed_at=None):
 
     # ---- hero
     stat_cards = [
-        (fmt_num(s["prompts"]), "prompts"),
-        (fmt_num(s["commands"]), "commands"),
-        (fmt_num(s["assistant_turns"]), "assistant turns"),
-        (fmt_num(s["tool_calls"]), "tool calls"),
-        (str(len(s["files_changed"])), "files changed"),
+        (fmt_num(s["prompts"]), f'prompt{_s(s["prompts"])}'),
+        (fmt_num(s["commands"]), f'command{_s(s["commands"])}'),
+        (fmt_num(s["assistant_turns"]),
+         f'assistant turn{_s(s["assistant_turns"])}'),
+        (fmt_num(s["tool_calls"]), f'tool call{_s(s["tool_calls"])}'),
+        (str(len(s["files_changed"])),
+         f'file{_s(len(s["files_changed"]))} changed'),
         (fmt_dur(s["active_ms"]), "active time"),
         (fmt_num(s["tokens_out"]), "tokens out"),
-        (str(len(days_active)), "days active"),
+        (str(len(days_active)), f'day{_s(len(days_active))} active'),
         (cost_text, cost_label, cost_title),
     ]
     if s.get("recovered_prompts"):
         stat_cards.insert(2, (
-            fmt_num(s["recovered_prompts"]), "recovered prompts",
-            "Prompts recovered from Codex history because no rollout was found; "
-            "the available sources do not contain assistant replies or usage."))
+            fmt_num(s["recovered_prompts"]),
+            f'recovered prompt{_s(s["recovered_prompts"])}',
+            RECOVERED_PROMPT_EXPLANATION))
     stats_html = _stat_cards_html(stat_cards)
 
     chips = []
@@ -1152,7 +1152,7 @@ def render(tl, home=None, refreshed_at=None):
         session_filter = (
             '<label class="sessionfilter"><input id="automatedToggle" '
             'type="checkbox" checked><span>Hide automated Codex sessions '
-            '<span class="filter-note">(codex exec + subagents; cost stays in totals)</span>'
+            '<span class="filter-note">(activity stays in project totals)</span>'
             '</span></label>')
 
     refreshed = refreshed_at or now_local()
@@ -1165,7 +1165,7 @@ def render(tl, home=None, refreshed_at=None):
                       f'<span id="heroSessionLabel">session{_s(visible_total)}</span>'
                       f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}')
 
-    # ---- navigation: readable per-input anchors "sNN-EE" (session number, input
+    # ---- navigation: readable per-entry anchors "sNN-EE" (session number, entry
     # within session), a sticky session stepper, and the vertical minimap rail
     sess_idx = {x["id"]: i + 1 for i, x in enumerate(rendered_sessions)}
     sess_tool = {x["id"]: x["tool"] for x in rendered_sessions}
@@ -1176,7 +1176,7 @@ def render(tl, home=None, refreshed_at=None):
         _seen[sid] += 1
         entry_ids.append(f's{sess_idx.get(sid, 1):02d}-{_seen[sid]:02d}')
         sess_first.setdefault(sid, m["ts"])   # session start, for the time ribbon
-    # per-input work magnitude (0..1, sqrt) sets minimap tick length
+    # per-entry work magnitude (0..1, sqrt) sets minimap tick length
     vmax_w = max((mag(m) for m in ms), default=0)
 
     # ---- sticky top bar: a persistent crumb (back-link + project name + the
@@ -1207,7 +1207,7 @@ def render(tl, home=None, refreshed_at=None):
                    f'<button class="snav" data-d="1" title="next session (j)"'
                    f' aria-label="next session">&rsaquo;</button></div>')
 
-    # time ribbon: a faint dot per message shows when activity actually fell — its
+    # time ribbon: a faint dot per entry shows when activity actually fell — its
     # spread and density. It renders for a single session too, where it reads as a
     # scrubber of that session's timeline; clickable session-start dots are added
     # only when there's more than one session to tell apart.
@@ -1270,7 +1270,7 @@ def render(tl, home=None, refreshed_at=None):
             if g.get("active"):
                 bits.append(f'{fmt_dur(g["active"])} active')
             if g.get("files"):
-                bits.append(f'{len(g["files"])} files')
+                bits.append(f'{len(g["files"])} file{_s(len(g["files"]))}')
             if g.get("tok"):
                 bits.append(f'{fmt_num(g["tok"])} tok out')
             scost, stext, _, _ = cost_display(g.get("by_model") or {})
@@ -1304,7 +1304,7 @@ def render(tl, home=None, refreshed_at=None):
         prev_ts = m["ts"]
 
         if kind == "session":
-            ask = '<div class="ask-open">session opened &mdash; activity before any prompt</div>'
+            ask = '<div class="ask-open">activity without a human prompt</div>'
         else:
             txt = m["text"] or ""
             clip = " clip" if len(txt) > 700 else ""
@@ -1314,16 +1314,18 @@ def render(tl, home=None, refreshed_at=None):
                        f'{esc(rest)}</div>')
             elif kind == "recovered":
                 ask = (f'<div class="ask{clip}">{esc(txt)}</div>'
-                       '<div class="recovered-note">Prompt recovered from Codex history '
-                       'because no rollout was found. The available sources do not '
-                       'contain the assistant reply, tools, token usage, or cost.</div>')
+                       f'<div class="recovered-note">'
+                       f'{esc(RECOVERED_PROMPT_EXPLANATION)}</div>')
             else:
                 ask = f'<div class="ask{clip}">{esc(txt)}</div>'
 
         # machine readout
         ro = ""
         if _has_substantive_activity(a) or a.get("subagents"):
-            stat_bits = [f'<span><b>{a["assistant_turns"]}</b> turns</span>']
+            stat_bits = [
+                f'<span><b>{a["assistant_turns"]}</b> '
+                f'turn{_s(a["assistant_turns"])}</span>'
+            ]
             if a["duration_ms"]:
                 stat_bits.append(f'<span><b>{esc(fmt_dur(a["duration_ms"]))}</b> active</span>')
             if a["tokens_out"]:
@@ -1332,7 +1334,9 @@ def render(tl, home=None, refreshed_at=None):
             if icost or pricing.cost_breakdown(a.get("tokens_by_model") or {})[2]:
                 stat_bits.append(f'<span><b>~{esc(itext)}</b></span>')
             if a["files"]:
-                stat_bits.append(f'<span><b>{len(a["files"])}</b> files</span>')
+                stat_bits.append(
+                    f'<span><b>{len(a["files"])}</b> '
+                    f'file{_s(len(a["files"]))}</span>')
             if multi_model and a["models"]:
                 dom = max(a["models"], key=a["models"].get)
                 mfam = model_family(dom)
@@ -1377,7 +1381,8 @@ def render(tl, home=None, refreshed_at=None):
             if detail_bits:
                 sumbits = ["log"]
                 if a["files"]:
-                    sumbits.append(f'{len(a["files"])} files')
+                    sumbits.append(
+                        f'{len(a["files"])} file{_s(len(a["files"]))}')
                 calls = sum(a["tools"].values())
                 if calls:
                     sumbits.append(f'{calls} tool calls')
@@ -1403,6 +1408,7 @@ def render(tl, home=None, refreshed_at=None):
 
     return PAGE.format(
         generator_meta=GENERATOR_META,
+        provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS,
         eyebrow=esc(_eyebrow(_session_tools(tl["sessions"]))),
@@ -1416,8 +1422,8 @@ def render(tl, home=None, refreshed_at=None):
         timeline="".join(nodes),
         last_activity=esc(fmt_ts(last)),
         refreshed=refresh_stamp(refreshed),
-        n_inputs=(s["prompts"] + s["commands"]
-                  + s.get("recovered_prompts", 0)),
+        n_inputs=_input_count(s),
+        input_suffix=_s(_input_count(s)),
         costnote=cost_method_html(s.get("tokens_by_model") or {}, "this project"),
     )
 
@@ -1471,10 +1477,10 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
   <div class="stats">{stats}</div>
   {costnote}
 </header>
-<div class="axislbl"><span>{gfirst}</span><span class="lbl">all inputs, shared time axis
+<div class="axislbl"><span>{gfirst}</span><span class="lbl">all timeline entries, shared time axis
 &middot; taller = more work after it</span><span>{glast}</span></div>
 <div class="shelf">{rows}</div>
-<footer>{n} projects &middot; generated from local transcripts &middot; refreshed {refreshed}</footer>
+<footer>{n} projects &middot; {provenance} &middot; refreshed {refreshed}</footer>
 </div>
 <script>{js}</script>
 </body></html>"""
@@ -1500,20 +1506,19 @@ def render_index(entries, refreshed_at=None, source_label=None):
     for _, tl in entries:
         s = tl["stats"]
         tot["sessions"] += s["sessions"]
-        tot["inputs"] += (
-            s["prompts"] + s["commands"] + s.get("recovered_prompts", 0))
+        tot["inputs"] += _input_count(s)
         tot["active"] += s["active_ms"]
         tot["tok"] += s["tokens_out"]
         merge_token_models(all_by_model, s.get("tokens_by_model"))
     tot_cost, tot_cost_text, tot_cost_label, tot_cost_title = cost_display(all_by_model)
     n_days = (gl_dt.date() - gf_dt.date()).days + 1
     stat_cards = [
-        (str(len(entries)), "projects"),
-        (str(tot["sessions"]), "sessions"),
-        (fmt_num(tot["inputs"]), "inputs typed"),
+        (str(len(entries)), f'project{_s(len(entries))}'),
+        (str(tot["sessions"]), f'session{_s(tot["sessions"])}'),
+        (fmt_num(tot["inputs"]), f'input{_s(tot["inputs"])} typed'),
         (fmt_dur(tot["active"]), "active time"),
         (fmt_num(tot["tok"]), "tokens out"),
-        (str(n_days), "days spanned"),
+        (str(n_days), f'day{_s(n_days)} spanned'),
         (tot_cost_text, tot_cost_label, tot_cost_title),
     ]
     stats_html = _stat_cards_html(stat_cards)
@@ -1531,9 +1536,9 @@ def render_index(entries, refreshed_at=None, source_label=None):
                         f'height:{h:.1f}%" title="{esc(tip)}"></i>')
         cells = [
             f'<b>{s["sessions"]}</b> session{_s(s["sessions"])}',
-            f'<b>{s["prompts"] + s["commands"] + s.get("recovered_prompts", 0)}</b> inputs',
+            f'<b>{_input_count(s)}</b> input{_s(_input_count(s))}',
             f'<b>{esc(fmt_dur(s["active_ms"]))}</b> active',
-            f'<b>{len(s["files_changed"])}</b> files',
+            f'<b>{len(s["files_changed"])}</b> file{_s(len(s["files_changed"]))}',
             f'<b>{esc(fmt_num(s["tokens_out"]))}</b> tok out',
             f'~<b>{esc(cost_display(s.get("tokens_by_model") or {})[1])}</b>',
             f'seen <b>{esc(fmt_date_short(s["last_ts"]))}</b>',
@@ -1556,10 +1561,10 @@ def render_index(entries, refreshed_at=None, source_label=None):
     label = _eyebrow(all_tools)
     return INDEX_PAGE.format(
         generator_meta=GENERATOR_META,
+        provenance=PAGE_PROVENANCE,
         css=CSS + INDEX_CSS,
         eyebrow=esc(label),
-        root=esc(source_label or (
-            PROJECTS + ("  ·  " + CODEX_SESSIONS if "codex" in all_tools else ""))),
+        root=esc(source_label or "Claude Code and Codex data"),
         range=(f'<b>{esc(fmt_date(gfirst))}</b> &rarr; <b>{esc(fmt_date(glast))}</b>'
                f' &middot; {len(entries)} projects'
                f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}'),
@@ -1592,7 +1597,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   {costnote}
 </header>
 <div class="log">{timeline}</div>
-<footer>{n_inputs} inputs typed &middot; generated from local transcripts &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
+<footer>{n_inputs} input{input_suffix} typed &middot; {provenance} &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
 </div>
 <script>{js}</script>
 </body></html>"""
@@ -1658,6 +1663,7 @@ def _is_generated_project_page(path):
     """Return whether an HTML file is a session-atlas project page."""
     marker = GENERATOR_META.encode()
     legacy_header = b"project log</title>"
+    # Frozen legacy ownership marker; do not couple it to current page copy.
     legacy_footer = b"generated from local transcripts"
     try:
         with open(path, "rb") as fh:
@@ -1813,9 +1819,7 @@ def _generate_all_locked(out, archive):
     slugs = _allocate_project_slugs(path for path, _ in merged)
     # Activity controls display order only. Slugs depend only on project paths,
     # so changing usage cannot exchange two projects' URLs.
-    merged.sort(key=lambda e: -(
-        e[1]["stats"]["prompts"] + e[1]["stats"]["commands"]
-        + e[1]["stats"].get("recovered_prompts", 0)))
+    merged.sort(key=lambda e: -_input_count(e[1]["stats"]))
     for path, tl in merged:
         slug = slugs[path]
         _write_project(tl, out, slug, index_path=index_outfile, refreshed_at=refreshed)
@@ -1827,7 +1831,7 @@ def _generate_all_locked(out, archive):
     for name in removed:
         print(f"Removed stale {os.path.join(out, name, 'index.html')}")
     print(f"Wrote {index_outfile} ({len(entries)} projects)")
-    print(f"  open: file://{os.path.abspath(index_outfile)}")
+    print(f"  open: {Path(index_outfile).resolve().as_uri()}")
 
 
 def main():
@@ -1836,10 +1840,13 @@ def main():
     ap.add_argument("project", nargs="?",
                     help="project basename (e.g. example-project) or path")
     ap.add_argument("--all", action="store_true",
-                    help="render every project under ~/.claude/projects plus an index page")
-    ap.add_argument("--out", default="./site", help="output directory (default ./site)")
+                    help="render every discovered Claude Code and Codex project, "
+                         "including archived sessions, plus an index page")
+    ap.add_argument("--out", default="./site",
+                    help="output directory (default %(default)s)")
     ap.add_argument("--archive", default="./archive",
-                    help="archive root (see archive_transcripts.py) also read by --all")
+                    help="archive root read by --all (default %(default)s; "
+                         "see archive_transcripts.py)")
     args = ap.parse_args()
 
     if args.all:
@@ -1853,14 +1860,18 @@ def main():
             project_path = tl["project_path"].rstrip("/")
             slug = _allocate_project_slugs([project_path])[project_path]
             outfile = _write_project(tl, args.out, slug)
-        print(f"  open: file://{os.path.abspath(outfile)}")
+        print(f"  open: {Path(outfile).resolve().as_uri()}")
     else:
         ap.error("give a project name/path, or --all")
 
 
 def _single(target):
-    """Resolve one project from Claude and/or Codex transcripts and merge them.
-    Codex rollouts are matched by cwd (only matching files are fully parsed)."""
+    """Build one project timeline from its selected Claude and Codex inputs.
+
+    Primary Codex rollouts are selected by working directory. Related
+    ``codex_exec`` rollouts can also match by repository URL, and only selected
+    rollout files are parsed fully.
+    """
     tls = []
     path = None
     try:

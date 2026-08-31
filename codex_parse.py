@@ -1,37 +1,10 @@
 #!/usr/bin/env python3
-"""Parser for OpenAI Codex CLI session rollouts (~/.codex/sessions/YYYY/MM/DD/*.jsonl).
+"""Parse Codex CLI rollouts into shared project timelines.
 
-See ``docs/transcript-formats.md`` for the shared parser contract and source
-record mappings.
-
-`build_codex_timelines()` groups every rollout by its project (`session_meta.cwd`)
-and returns one timeline dict per project with the exact same shape as
-`ccx_parse.build_timeline`, so the site generator renders both sources alike.
-Each session dict carries `"tool": "codex"`.
-
-Rollout records are `{"timestamp": <ISO8601 UTC>, "type": T, "payload": {...}}`:
-  session_meta   first line; payload has id, cwd, cli_version, timestamp, git?
-  event_msg      payload.type "user_message" is the ONLY reliable source of
-                 genuinely-typed prompts (the response_item user stream is
-                 polluted with injected AGENTS.md / environment_context);
-                 "token_count" carries cumulative token usage;
-                 "patch_apply_end" (June 2026+) lists changed files.
-  response_item  the model-facing transcript: assistant messages, reasoning,
-                 function_call (shell etc.), custom_tool_call (apply_patch).
-  turn_context   per-turn config; the only place the model name appears.
-
-Forked subagent rollouts begin with a replay of their parent's history. The
-replayed records use fresh envelope timestamps and include the parent's
-cumulative token counters, so they must be skipped through the subagent's first
-real `task_started` event. Independent subagents have no replay and are parsed
-from the beginning.
-
-Prompts whose session has no discovered rollout can be recovered from
-`~/.codex/history.jsonl` and mapped to projects with the indexed diagnostics
-database. The source data does not establish why a rollout is absent, and it
-does not retain replies, tools, tokens, or cost. Codex has no turn-duration
-records, so active time is approximated as (last activity record ts - milestone
-ts).
+``build_codex_timelines()`` is the main rollout entry point, and
+``build_history_only_timelines()`` recovers prompt-only timelines. See
+``docs/transcript-formats.md#shared-timeline-shape-the-contract`` for the output
+schema and source-record mappings.
 """
 import glob
 import json
@@ -49,8 +22,8 @@ CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
 CODEX_HISTORY = os.path.expanduser("~/.codex/history.jsonl")
 CODEX_LOGS = os.path.expanduser("~/.codex/logs_2.sqlite")
 
-# These payload types dominate the (large) files by volume and are unused here;
-# skipping them before json.loads keeps a full parse of ~500MB fast.
+# Function-call outputs and reasoning payloads are unused here; inspect their
+# discriminator before json.loads to avoid decoding them.
 _SKIP_MARKS = ('"payload":{"type":"function_call_output"',
                '"payload":{"type":"reasoning"')
 
@@ -168,13 +141,8 @@ def _history_ts(timestamp):
 
 def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
                                  logs_path=CODEX_LOGS):
-    """Build recovered-prompt timelines for sessions without a known rollout.
-
-    Human prompts can remain in ``history.jsonl`` after or without a rollout,
-    and indexed diagnostics can retain the thread's cwd. Assistant replies,
-    tool activity, tokens, and cost are not durable in these sources, so this
-    parser does not invent them or claim that the session was a specific kind.
-    """
+    """Return prompt-only timelines for history sessions absent from
+    ``known_session_ids``."""
     if not os.path.isfile(history_path) or not os.path.isfile(logs_path):
         return []
     history = {}
@@ -243,11 +211,8 @@ def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
 
 
 def _parse_rollout(path):
-    """Parse one rollout into project data and skipped-record diagnostics.
-
-    Returns ``(cwd, session, milestones, git_branches, diagnostics)``, or
-    ``None`` for a file with no session metadata or genuine user input.
-    """
+    """Return parsed rollout data, or ``None`` when no session metadata is
+    parsed, ``cwd`` is missing, or no milestone survives finalization."""
     sess_id = os.path.basename(path)[-42:-6]  # uuid from filename, fallback only
     cwd = None
     sess = None
