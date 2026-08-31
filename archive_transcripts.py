@@ -64,9 +64,9 @@ def archive(dest_root):
     for d in sorted(glob.glob(os.path.join(PROJECTS, "*"))):
         if not os.path.isdir(d):
             continue
-        # top-level session files + nested subagent/workflow transcripts (which live
-        # at <project>/<session>/subagents/**/*.jsonl and carry the bulk of a fan-out's
-        # token spend). Mirror both, keeping each file's path under the project dir so
+        # Archive top-level session files and nested subagent/workflow transcripts.
+        # Nested files live at <project>/<session>/subagents/**/*.jsonl and fall
+        # outside the top-level glob. Keep each file's path under the project dir so
         # build_timeline finds them in the archive exactly as it does in the live tree.
         for f in sorted(glob.glob(os.path.join(d, "*.jsonl"))) + _iter_subagent_transcripts(d):
             rel = os.path.join("claude", os.path.basename(d), os.path.relpath(f, d))

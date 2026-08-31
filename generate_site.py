@@ -432,10 +432,10 @@ def _timeline_repository(tl):
 def _group_codex_timelines(timelines):
     """Group exec-only working directories under their interactive checkout.
 
-    ``codex exec`` often runs in a temporary clone or worktree, so cwd alone
-    fragments one repository into many project cards. A repository's canonical
-    path comes from an interactive timeline; exec-only timelines with the same
-    recorded remote are assigned to it.
+    When an exec-only timeline uses a different working directory from the
+    interactive checkout, grouping by cwd alone can split one repository across
+    project cards. A repository's canonical path comes from an interactive
+    timeline; exec-only timelines with the same recorded remote are assigned to it.
     """
     canonical = {}
     for tl in timelines:

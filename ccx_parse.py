@@ -297,9 +297,9 @@ def _subagent_usage(path, diagnostics=None):
                 _parse_diagnostic(
                     diagnostics, path, line_number, "non-UTF-8 transcript record")
                 continue
-            # Nested logs are mostly user/tool-result/attachment records. Inspect
-            # their discriminator before json.loads; tolerate whitespace/key order
-            # with a regex rather than relying on compact serialization.
+            # Nested logs include non-assistant records, so inspect their
+            # discriminator before json.loads. Tolerate whitespace and key-order
+            # variation with a regex rather than relying on compact serialization.
             is_assistant = bool(re.search(r'"type"\s*:\s*"assistant"', line))
             if not is_assistant and start is not None:
                 continue
