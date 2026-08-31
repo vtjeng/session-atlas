@@ -191,6 +191,21 @@ class AccountingTests(unittest.TestCase):
         self.assertFalse(unpriced)
         self.assertEqual(cats["in"]["tokens"], 1_000_000)
 
+    def test_current_openai_rates(self):
+        # These tuples freeze OpenAI's August 2026 standard per-million-token
+        # rates in (input, output, cache read, 30-minute cache write,
+        # one-hour cache write) order. None verifies that the table does not
+        # invent an OpenAI one-hour write category.
+        sol_rates = (4.0, 20.0, 0.4, 5.0, None)
+        # The gpt-5.6 alias routes to Sol, so both entries must stay identical.
+        self.assertEqual(pricing.PRICES["gpt-5.6"], sol_rates)
+        self.assertEqual(pricing.PRICES["gpt-5.6-sol"], sol_rates)
+        # Terra and Luna exercise the two independently priced family variants.
+        self.assertEqual(pricing.PRICES["gpt-5.6-terra"],
+                         (2.0, 12.0, 0.2, 2.5, None))
+        self.assertEqual(pricing.PRICES["gpt-5.6-luna"],
+                         (0.2, 1.2, 0.02, 0.25, None))
+
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)
         self.assertEqual(len(pricing.CATEGORIES), 5)

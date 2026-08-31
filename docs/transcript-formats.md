@@ -66,8 +66,10 @@ intervals are discarded.
   understated. If a
   child begins after the parent snapshot read by the current render, defer it
   until the next render rather than attributing it to the preceding prompt.
-  Reconcile against `/cost`, but
-  note `/cost` is process-scoped and spans multiple session-ids after a `/clear`.
+  Reconcile against `/usage` (`/cost` is an alias). Claude Code v2.1.211 and
+  later resets the total when `/clear` starts a new session; earlier versions
+  accumulated cost for the process lifetime. See
+  [Claude Code cost accounting](https://code.claude.com/docs/en/costs).
 - Timestamps are UTC ISO-8601; the site renders local time via
   `datetime.astimezone()`.
 
