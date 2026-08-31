@@ -1,0 +1,7 @@
+[Unit]
+Description=Render session-atlas static site
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/session-atlas
+ExecStart=/usr/bin/python3 generate_site.py --all

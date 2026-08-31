@@ -1,0 +1,10 @@
+{"timestamp":"2026-03-15T17:10:00.000Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","cwd":"/home/demo/src/example-project","timestamp":"2026-03-15T17:10:00.000Z","originator":"codex-tui","cli_version":"0.142.0","git":{"branch":"main","repository_url":"https://example.com/example-project.git"}}}
+{"timestamp":"2026-03-15T17:10:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Review cache invalidation and add a regression test."}}
+{"timestamp":"2026-03-15T17:10:02.000Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}
+{"timestamp":"2026-03-15T17:10:10.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will run the focused cache test before changing the invalidation path."}]}}
+{"timestamp":"2026-03-15T17:11:00.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"python3 -m unittest tests.test_cache\"}"}}
+{"timestamp":"2026-03-15T17:13:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The failing case isolates stale entries after a write."}]}}
+{"timestamp":"2026-03-15T17:14:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Update File: tests/test_cache.py\n"}}
+{"timestamp":"2026-03-15T17:14:01.000Z","type":"event_msg","payload":{"type":"patch_apply_end","changes":{"/home/demo/src/example-project/tests/test_cache.py":{"kind":"update"}}}}
+{"timestamp":"2026-03-15T17:18:50.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The regression test now covers stale entries after a write."}]}}
+{"timestamp":"2026-03-15T17:19:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":530000,"cached_input_tokens":500000,"output_tokens":20000}}}}

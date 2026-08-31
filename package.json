@@ -1,0 +1,11 @@
+{
+  "name": "session-atlas",
+  "private": true,
+  "scripts": {
+    "screenshots:install": "playwright install chromium",
+    "screenshots": "scripts/capture-readme-screenshots.sh"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

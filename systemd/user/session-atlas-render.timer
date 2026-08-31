@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh session-atlas static site every ten minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+Unit=session-atlas-render.service
+
+[Install]
+WantedBy=timers.target

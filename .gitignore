@@ -1,0 +1,11 @@
+# generated output
+/site/
+# local transcript archive (private data, can be hundreds of MB)
+/archive/
+# python
+__pycache__/
+*.pyc
+.venv/
+.uv-cache/
+# pinned documentation-screenshot tooling
+node_modules/

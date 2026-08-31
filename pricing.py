@@ -1,0 +1,85 @@
+"""Rough per-model cost estimates from token usage.
+
+Rates are US-dollar list prices per 1,000,000 tokens, current as of ``AS_OF``.
+They are estimates, not invoices: they use each vendor's standard published
+list rates (short-context, non-batch, no priority surcharge), ignore
+volume/enterprise discounts and long-context tiers, and drift whenever a vendor
+changes pricing. Update the table below (and ``AS_OF``) when rates move.
+
+Each entry is ``(input, output, cache_read, cache_write, cache_write_1h)``
+per 1M tokens:
+  input        uncached prompt tokens, full rate
+  output       generated tokens
+  cache_read   tokens served from cache (cheaper): Anthropic 0.1x input,
+               OpenAI its published cached-input rate
+  cache_write  standard writes: Anthropic 5-minute TTL and OpenAI's 30-minute
+               TTL are 1.25x input.
+  cache_write_1h  Anthropic's extended one-hour TTL, at 2x input. ``None`` where
+               the vendor doesn't bill this category, so it's never priced.
+"""
+
+AS_OF = "2026-08"
+
+# Anthropic: platform.claude.com/docs (standard rates).
+# OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
+PRICES = {
+    "claude-fable-5":  (10.00, 50.00, 1.000, 12.50, 20.00),
+    "claude-opus-5":   ( 5.00, 25.00, 0.500,  6.25, 10.00),
+    "claude-opus-4-8": ( 5.00, 25.00, 0.500,  6.25, 10.00),
+    "claude-opus-4-6": ( 5.00, 25.00, 0.500,  6.25, 10.00),
+    "claude-sonnet-5": ( 2.00, 10.00, 0.200,  2.50,  4.00),
+    "claude-haiku-4-5":( 1.00,  5.00, 0.100,  1.25,  2.00),
+    "claude-haiku-4-5-20251001":
+                         ( 1.00,  5.00, 0.100,  1.25,  2.00),
+    "gpt-5.6":         ( 5.00, 30.00, 0.500,  6.25,  None),
+    "gpt-5.6-sol":     ( 5.00, 30.00, 0.500,  6.25,  None),
+    "gpt-5.6-terra":   ( 2.50, 15.00, 0.250,  3.125, None),
+    "gpt-5.6-luna":    ( 1.00,  6.00, 0.100,  1.25,  None),
+    "gpt-5.5":         ( 5.00, 30.00, 0.500,  None,  None),
+    "gpt-5.4":         ( 2.50, 15.00, 0.250,  None,  None),
+    "gpt-5.3-codex":   ( 1.75, 14.00, 0.175,  None,  None),
+}
+
+
+# Token categories, in rate-tuple order: key, human label.
+CATEGORIES = (("in", "input"), ("out", "output"),
+              ("cr", "cache read"), ("cc", "cache write"),
+              ("cc1h", "cache write 1h"))
+
+
+def cost_breakdown(by_model):
+    """Break a per-model token count down into cost by token category.
+
+    ``by_model`` maps a model id to ``{"in", "out", "cr", "cc", "cc1h"}``
+    token counts
+    (uncached input, output, cache-read, cache-write). Returns
+    ``(cats, total, unpriced)`` where ``cats`` maps each category key to
+    ``{"tokens", "cost"}`` summed across models, ``total`` is the dollar sum,
+    and ``unpriced`` is the sorted list of model ids that carried billable
+    tokens but have no rate in ``PRICES`` — surface it so the estimate is never
+    silently understated.
+    """
+    cats = {k: {"tokens": 0, "cost": 0.0} for k, _ in CATEGORIES}
+    unpriced = []
+    for mid, tk in by_model.items():
+        rates = PRICES.get(mid)
+        if rates is None:
+            if any(tk.get(k, 0) for k, _ in CATEGORIES):
+                unpriced.append(mid)
+            continue
+        for (k, _), rate in zip(CATEGORIES, rates):
+            n = tk.get(k, 0)
+            cats[k]["tokens"] += n
+            if rate is not None:  # None = vendor doesn't bill this category
+                cats[k]["cost"] += n * rate / 1_000_000
+    total = sum(c["cost"] for c in cats.values())
+    return cats, total, sorted(unpriced)
+
+
+def estimate_cost(by_model):
+    """Total dollar cost for a per-model token breakdown.
+
+    See :func:`cost_breakdown` for the shape of ``by_model`` and, when you also
+    need the per-category split or the unpriced-model list, call it directly.
+    """
+    return cost_breakdown(by_model)[1]

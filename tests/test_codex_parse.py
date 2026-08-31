@@ -1,0 +1,488 @@
+from collections import Counter
+import json
+import os
+import sqlite3
+import tempfile
+import unittest
+
+from ccx_parse import _has_substantive_activity, _new_activity, _timeline_dict
+from codex_parse import (_parse_rollout, build_codex_timelines,
+                         build_history_only_timelines)
+from generate_site import _group_codex_timelines, _merge_timelines, render
+
+
+def _record(ts, record_type, payload):
+    return {"timestamp": ts, "type": record_type, "payload": payload}
+
+
+class CodexTokenParsingTests(unittest.TestCase):
+    def parse(self, records):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(
+                tmp, "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl")
+            with open(path, "w") as fh:
+                for record in records:
+                    fh.write(json.dumps(record) + "\n")
+            parsed = _parse_rollout(path)
+        self.assertIsNotNone(parsed)
+        return parsed
+
+    def timeline(self, records):
+        cwd, session, milestones, branches, diagnostics = self.parse(records)
+        return _timeline_dict(
+            "/tmp/codex", cwd, [session], milestones, branches,
+            diagnostics=diagnostics)
+
+    def test_cumulative_usage_deduplicates_snapshots_and_splits_cached_input(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "user_message", "message": "run it"}),
+            # input_tokens includes the 70 cached tokens, leaving 30 fresh.
+            _record("2026-07-20T00:00:03.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            # A rate-limit-only event must not reset this nonzero baseline.
+            _record("2026-07-20T00:00:04.000Z", "event_msg", {
+                "type": "token_count", "info": None}),
+            # The next snapshot adds 20 cached + 10 fresh input and 2 output.
+            _record("2026-07-20T00:00:05.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 130, "cached_input_tokens": 90, "output_tokens": 12}}}),
+            # Rate-limit refreshes can repeat an unchanged cumulative snapshot.
+            _record("2026-07-20T00:00:06.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 130, "cached_input_tokens": 90, "output_tokens": 12}}}),
+            _record("2026-07-20T00:00:07.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        activity = milestones[0]["activity"]
+        self.assertEqual(
+            activity["tokens_by_model"]["gpt-5.5"],
+            {"in": 40, "out": 12, "cr": 90, "cc": 0, "cc1h": 0},
+        )
+
+    def test_session_preserves_codex_exec_originator(self):
+        # This synthetic remote verifies that session metadata is preserved.
+        repository = "https://example.com/example-repository.git"
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "exec", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                "originator": "codex_exec",
+                "git": {"repository_url": repository}}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "review the repository"}),
+        ]
+
+        _, session, _, _, _ = self.parse(records)
+        self.assertEqual(session["originator"], "codex_exec")
+        self.assertEqual(session["repository_url"], repository)
+
+    def test_exec_workdirs_group_under_project_and_automated_sessions_can_hide(self):
+        # One synthetic remote links the interactive checkout and temporary clone.
+        repository = "https://example.com/example-project.git"
+
+        def timeline(session_id, path, originator, is_subagent=False, label=None):
+            activity = _new_activity()
+            # One million input tokens makes each session's $5 contribution easy to verify.
+            token_count = 1_000_000
+            activity["tokens_in"] = token_count
+            activity["tokens_by_model"]["gpt-5.5"] = {
+                "in": token_count, "out": 0, "cr": 0, "cc": 0, "cc1h": 0}
+            session = {"id": session_id, "last_ts": "2026-07-20T00:00:01.000Z",
+                       "title": None, "tool": "codex", "originator": originator,
+                       "repository_url": repository, "is_subagent": is_subagent,
+                       "subagent_label": label,
+                       "parent_session_id": "tui" if is_subagent else None,
+                       "parent_relation": "spawned by" if is_subagent else None}
+            milestone = {"kind": "session" if is_subagent else "prompt",
+                         "text": None if is_subagent else "work",
+                         "ts": "2026-07-20T00:00:00.000Z", "session": session_id,
+                         "activity": activity}
+            return _timeline_dict(
+                "/tmp/codex", path, [session], [milestone], Counter())
+
+        # Matching the remote basename makes this checkout the canonical path.
+        project_path = "/home/user/example-project"
+        tui_timeline = timeline("tui", project_path, "codex-tui")
+        subagent_timeline = timeline(
+            "subagent", project_path, "codex-tui", is_subagent=True,
+            label="/root/reviewer")
+        # A different cwd verifies regrouping by remote rather than by path.
+        exec_timeline = timeline("exec", "/tmp/example-project-audit", "codex_exec")
+
+        grouped = _group_codex_timelines(
+            [tui_timeline, subagent_timeline, exec_timeline])
+        self.assertEqual(list(grouped), [project_path])
+        page = render(_merge_timelines(grouped[project_path]))
+
+        self.assertIn('Hide automated Codex sessions', page)
+        self.assertEqual(page.count('<section class="session-block" data-automated>'), 2)
+        self.assertIn('>codex exec</span>', page)
+        self.assertIn('>subagent</span>', page)
+        self.assertIn('<div class="stitle">/root/reviewer</div>', page)
+        self.assertIn('spawned by session 01</a>', page)
+        self.assertIn("const automatedQuery='show-automated'", page)
+        # One interactive session remains visible when the two automated sessions hide.
+        self.assertIn(
+            '<b id="heroSessionCount">1</b> '
+            '<span id="heroSessionLabel">session</span>', page)
+        # All three $5 sessions remain in the project summary while two are hidden.
+        self.assertIn('<div class="n">$15</div>', page)
+
+    def test_history_only_prompts_render_as_recovered_prompt_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history_path = os.path.join(tmp, "history.jsonl")
+            logs_path = os.path.join(tmp, "logs.sqlite")
+            # The known root prompt must stay excluded. The missing session has
+            # two human prompts around one slash command, which must be skipped.
+            history = [
+                {"session_id": "root", "ts": 1784505600,
+                 "text": "ordinary persisted prompt"},
+                {"session_id": "missing", "ts": 1784505601,
+                 "text": "compare the two approaches"},
+                {"session_id": "missing", "ts": 1784505602,
+                 "text": "/status"},
+                {"session_id": "missing", "ts": 1784505603,
+                 "text": "which one would you choose?"},
+            ]
+            with open(history_path, "w") as fh:
+                for item in history:
+                    fh.write(json.dumps(item) + "\n")
+
+            db = sqlite3.connect(logs_path)
+            db.execute(
+                "CREATE TABLE logs (id INTEGER PRIMARY KEY, ts INTEGER, "
+                "ts_nanos INTEGER, feedback_log_body TEXT, thread_id TEXT)")
+            db.execute(
+                "INSERT INTO logs VALUES (?, ?, ?, ?, ?)",
+                (1, 1784505601, 0,
+                 'legacy_fallback_cwd: AbsolutePathBuf("/repo")', "missing"))
+            db.commit()
+            db.close()
+
+            timelines = build_history_only_timelines(
+                {"root"}, history_path=history_path, logs_path=logs_path)
+
+        self.assertEqual(len(timelines), 1)
+        timeline = timelines[0]
+        self.assertEqual(timeline["project_path"], "/repo")
+        self.assertTrue(timeline["sessions"][0]["is_history_only"])
+        self.assertEqual(
+            timeline["sessions"][0]["originator"], "codex_history_only")
+        self.assertEqual(timeline["stats"]["recovered_prompts"], 2)
+        self.assertEqual(timeline["stats"]["prompts"], 0)
+        self.assertEqual([m["kind"] for m in timeline["milestones"]],
+                         ["recovered", "recovered"])
+
+        page = render(timeline)
+        self.assertIn('>recovered</span>', page)
+        self.assertIn('compare the two approaches', page)
+        self.assertIn('which one would you choose?', page)
+        self.assertNotIn('/status', page)
+        self.assertIn(
+            'Prompt recovered from Codex history because no rollout was found.',
+            page,
+        )
+        self.assertEqual(page.count(
+            '<section class="session-block" data-automated>'), 0)
+
+    def test_model_switch_attributes_each_cumulative_delta_to_the_active_model(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "user_message", "message": "first model"}),
+            # GPT-5.5 contributes 70 cached + 30 fresh input tokens.
+            _record("2026-07-20T00:00:03.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            _record("2026-07-20T00:00:04.000Z", "turn_context", {"model": "gpt-5.4"}),
+            # The global counter rises by 60 input, including 30 cached, plus 10 output.
+            _record("2026-07-20T00:00:05.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 160, "cached_input_tokens": 100, "output_tokens": 20}}}),
+            _record("2026-07-20T00:00:06.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        by_model = milestones[0]["activity"]["tokens_by_model"]
+        self.assertEqual(by_model["gpt-5.5"],
+                         {"in": 30, "out": 10, "cr": 70, "cc": 0, "cc1h": 0})
+        self.assertEqual(by_model["gpt-5.4"],
+                         {"in": 30, "out": 10, "cr": 30, "cc": 0, "cc1h": 0})
+
+    def test_independent_subagent_usage_is_kept_without_counting_its_assignment(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                # Exercise the legacy source.subagent encoding by itself.
+                "source": {"subagent": {"thread_spawn": {}}}}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "user_message", "message": "agent assignment"}),
+            # Independent child counters start at zero: 40 cached + 10 fresh.
+            _record("2026-07-20T00:00:03.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _record("2026-07-20T00:00:04.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        self.assertEqual([m["kind"] for m in milestones], ["session"])
+        self.assertEqual(
+            milestones[0]["activity"]["tokens_by_model"]["gpt-5.5"],
+            {"in": 10, "out": 5, "cr": 40, "cc": 0, "cc1h": 0},
+        )
+
+    def test_forked_subagent_skips_replayed_history_and_keeps_child_delta(self):
+        records = [
+            _record("2026-07-20T00:00:00.900Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.900Z",
+                "forked_from_id": "parent", "thread_source": "subagent",
+                "source": {"subagent": {"thread_spawn": {}}}}),
+            # Older fork formats can replay the parent's session_meta too.
+            _record("2026-07-20T00:00:00.901Z", "session_meta", {
+                "id": "parent", "cwd": "/wrong", "timestamp": "2026-07-19T23:00:00.000Z"}),
+            _record("2026-07-20T00:00:00.902Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:00.903Z", "event_msg", {
+                "type": "user_message", "message": "copied human prompt"}),
+            _record("2026-07-20T00:00:00.904Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100}}}),
+            # This started_at is from the parent's past and remains replay data.
+            _record("2026-07-20T00:00:00.905Z", "event_msg", {
+                "type": "task_started", "started_at": 1784505599}),
+            # Session start is 1784505600.9; integer started_at 1784505600 marks child work.
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "task_started", "started_at": 1784505600}),
+            _record("2026-07-20T00:00:01.100Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:01.200Z", "event_msg", {
+                "type": "user_message", "message": "child assignment"}),
+            # Only this 60/10/20 increment belongs to the child: 40 fresh input.
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 1060, "cached_input_tokens": 820, "output_tokens": 110}}}),
+            _record("2026-07-20T00:00:03.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        cwd, session, milestones, _, _ = self.parse(records)
+        self.assertEqual(cwd, "/repo")
+        self.assertEqual(session["id"], "child")
+        self.assertEqual(session["parent_session_id"], "parent")
+        self.assertEqual(session["parent_relation"], "fork of")
+        self.assertEqual([m["kind"] for m in milestones], ["session"])
+        self.assertEqual(
+            milestones[0]["activity"]["tokens_by_model"]["gpt-5.5"],
+            {"in": 40, "out": 10, "cr": 20, "cc": 0, "cc1h": 0},
+        )
+
+    def test_interrupted_subagent_keeps_usage_without_an_assistant_message(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                # Exercise the thread_source encoding by itself.
+                "thread_source": "subagent", "forked_from_id": "parent"}),
+            # Parent replay establishes a nonzero baseline that must be excluded.
+            _record("2026-07-20T00:00:00.100Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 100}}}),
+            _record("2026-07-20T00:00:00.200Z", "event_msg", {
+                "type": "task_started", "started_at": 1784505600}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            # The task was interrupted after a model call, before any assistant message.
+            # Its 80 cached + 10 fresh input tokens must still reach the total.
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 1090, "cached_input_tokens": 880, "output_tokens": 104}}}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        self.assertEqual(len(milestones), 1)
+        self.assertEqual(
+            milestones[0]["activity"]["tokens_by_model"]["gpt-5.5"],
+            {"in": 10, "out": 4, "cr": 80, "cc": 0, "cc1h": 0},
+        )
+
+    def test_reused_subagent_tasks_split_idle_time_without_adding_prompts(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                "thread_source": "subagent"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "task_started", "started_at": 1784505601}),
+            _record("2026-07-20T00:00:01.100Z", "turn_context", {"model": "gpt-5.5"}),
+            # The first task contributes 40 cached + 10 fresh input tokens.
+            _record("2026-07-20T00:00:04.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _record("2026-07-20T00:00:05.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "first done"}]}),
+            # Reuse after a 95-second idle gap; v2 emits no user_message here.
+            _record("2026-07-20T00:01:40.000Z", "event_msg", {
+                "type": "task_started", "started_at": 1784505700}),
+            _record("2026-07-20T00:01:40.100Z", "turn_context", {"model": "gpt-5.5"}),
+            # The second task contributes 20 cached + 10 fresh input tokens.
+            _record("2026-07-20T00:01:42.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 80, "cached_input_tokens": 60, "output_tokens": 8}}}),
+            _record("2026-07-20T00:01:43.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "second done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        self.assertEqual([m["kind"] for m in milestones], ["session", "session"])
+        self.assertEqual([m["activity"]["duration_ms"] for m in milestones], [4000, 3000])
+        self.assertEqual(
+            [m["activity"]["tokens_by_model"]["gpt-5.5"] for m in milestones],
+            [
+                {"in": 10, "out": 5, "cr": 40, "cc": 0, "cc1h": 0},
+                {"in": 10, "out": 3, "cr": 20, "cc": 0, "cc1h": 0},
+            ],
+        )
+
+    def test_injected_bootstrap_duration_does_not_create_an_empty_milestone(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            # Ignored model-facing bootstrap records can arrive well after session_meta.
+            _record("2026-07-20T00:10:00.000Z", "response_item", {
+                "type": "message", "role": "developer", "content": [{"text": "permissions"}]}),
+            _record("2026-07-20T00:10:01.000Z", "event_msg", {
+                "type": "user_message", "message": "real prompt"}),
+            _record("2026-07-20T00:10:02.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:10:03.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        self.assertEqual([m["kind"] for m in milestones], ["prompt"])
+        self.assertEqual(milestones[0]["activity"]["duration_ms"], 2000)
+
+    def test_interrupted_tool_only_session_is_retained(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                "thread_source": "subagent"}),
+            # A tool call is substantive even if interruption prevents text or usage output.
+            _record("2026-07-20T00:00:02.000Z", "response_item", {
+                "type": "function_call", "name": "exec_command",
+                "arguments": json.dumps({"cmd": "true"})}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        self.assertEqual(len(milestones), 1)
+        self.assertEqual(milestones[0]["activity"]["tools"], {"Shell": 1})
+
+    def test_substantive_activity_predicate_checks_each_work_bucket(self):
+        for key, value in (
+                ("assistant_turns", 1), ("tools", {"Shell": 1}),
+                ("files", ["/repo/file.txt"]), ("tokens_in", 1),
+                ("tokens_out", 1), ("cache_read", 1), ("cache_create", 1)):
+            with self.subTest(key=key):
+                activity = _new_activity()
+                activity[key] = value
+                self.assertTrue(_has_substantive_activity(activity))
+
+        duration_only = _new_activity()
+        duration_only["duration_ms"] = 60_000
+        self.assertFalse(_has_substantive_activity(duration_only))
+
+    def test_render_shows_zero_turn_tool_token_and_file_activity(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z",
+                "thread_source": "subagent"}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:02.000Z", "response_item", {
+                "type": "function_call", "name": "exec_command",
+                "arguments": json.dumps({"cmd": "true"})}),
+            _record("2026-07-20T00:00:03.000Z", "event_msg", {
+                "type": "patch_apply_end", "changes": {"/repo/result.txt": {}}}),
+            # Zero-turn interrupted work still produced 80 cached + 10 fresh tokens.
+            _record("2026-07-20T00:00:04.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 90, "cached_input_tokens": 80, "output_tokens": 4}}}),
+        ]
+
+        page = render(self.timeline(records))
+        self.assertIn('<div class="ro">', page)
+        self.assertNotIn('entry session quiet', page)
+        self.assertIn('4 tok out', page)
+        self.assertIn('result.txt', page)
+        self.assertIn('<span class="tn">Shell</span>', page)
+
+    def test_render_keeps_duration_only_prompt_quiet(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "prompt"}),
+            # Ignored metadata advances time but is not machine work.
+            _record("2026-07-20T00:01:01.000Z", "response_item", {
+                "type": "message", "role": "developer", "content": [{"text": "metadata"}]}),
+        ]
+
+        page = render(self.timeline(records))
+        self.assertIn('entry prompt quiet', page)
+        self.assertNotIn('<div class="ro">', page)
+
+    def test_build_timelines_aggregates_root_and_independent_child_once(self):
+        root = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:00:02.000Z", "event_msg", {
+                "type": "user_message", "message": "human prompt"}),
+            # Root contributes 70 cached + 30 fresh input tokens.
+            _record("2026-07-20T00:00:03.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 100, "cached_input_tokens": 70, "output_tokens": 10}}}),
+            _record("2026-07-20T00:00:04.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+        child = [
+            _record("2026-07-20T00:01:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:01:00.000Z",
+                "thread_source": "subagent"}),
+            _record("2026-07-20T00:01:01.000Z", "turn_context", {"model": "gpt-5.5"}),
+            _record("2026-07-20T00:01:02.000Z", "event_msg", {
+                "type": "user_message", "message": "agent assignment"}),
+            # Child contributes 40 cached + 10 fresh input tokens.
+            _record("2026-07-20T00:01:03.000Z", "event_msg", {
+                "type": "token_count", "info": {"total_token_usage": {
+                    "input_tokens": 50, "cached_input_tokens": 40, "output_tokens": 5}}}),
+            _record("2026-07-20T00:01:04.000Z", "response_item", {
+                "type": "message", "role": "assistant", "content": [{"text": "done"}]}),
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, records in (("root", root), ("child", child)):
+                path = os.path.join(tmp, f"rollout-2026-07-20T00-00-00-{name}.jsonl")
+                with open(path, "w") as fh:
+                    for record in records:
+                        fh.write(json.dumps(record) + "\n")
+                paths.append(path)
+            timelines = build_codex_timelines(paths)
+
+        self.assertEqual(len(timelines), 1)
+        stats = timelines[0]["stats"]
+        self.assertEqual(stats["sessions"], 2)
+        self.assertEqual(stats["prompts"], 1)
+        self.assertEqual(
+            stats["tokens_by_model"]["gpt-5.5"],
+            {"in": 40, "out": 15, "cr": 110, "cc": 0, "cc1h": 0},
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
