@@ -42,6 +42,10 @@ PAGE_PROVENANCE = "generated from local transcripts"
 INPUT_COUNT_EXPLANATION = (
     "Prompts, commands, and recovered prompts counted as inputs."
 )
+AUTOMATED_WORK_EXPLANATION = (
+    "Delegated Codex subagent and non-interactive codex exec work. The control "
+    "shows or hides these timeline sections; project totals include their activity."
+)
 RECOVERED_PROMPT_EXPLANATION = (
     "Recovered from Codex history because no rollout was found; typically "
     "associated with `/btw`, but not always. The assistant reply and structured "
@@ -794,11 +798,16 @@ const showAutomated=new URL(location.href).searchParams.get(automatedQuery)==='1
 document.documentElement.classList.toggle('show-automated',showAutomated);
 const automatedToggle=document.getElementById('automatedToggle');
 if(automatedToggle){
-  automatedToggle.checked=!showAutomated;
+  automatedToggle.checked=showAutomated;
+  const automatedToggleNote=document.getElementById('automatedToggleNote');
+  if(automatedToggleNote){
+    const n=Number(automatedToggle.dataset.automatedCount)||0;
+    automatedToggleNote.textContent=`(${n} automated rollout${n===1?'':'s'} ${showAutomated?'shown':'hidden'} · included in totals)`;
+  }
   automatedToggle.addEventListener('change',()=>{
     const url=new URL(location.href);
-    if(automatedToggle.checked) url.searchParams.delete(automatedQuery);
-    else url.searchParams.set(automatedQuery,'1');
+    if(automatedToggle.checked) url.searchParams.set(automatedQuery,'1');
+    else url.searchParams.delete(automatedQuery);
     location.href=url;
   });
 }
@@ -1160,10 +1169,15 @@ def render(tl, home=None, refreshed_at=None):
     visible_total = total - len(automated_sessions)
     session_filter = ""
     if automated_sessions:
+        automated_count = len(automated_sessions)
         session_filter = (
-            '<label class="sessionfilter"><input id="automatedToggle" '
-            'type="checkbox" checked><span>Hide automated Codex sessions '
-            '<span class="filter-note">(activity stays in project totals)</span>'
+            f'<label class="sessionfilter" title="{esc(AUTOMATED_WORK_EXPLANATION)}">'
+            f'<input id="automatedToggle" type="checkbox" '
+            f'data-automated-count="{automated_count}">'
+            '<span>Show automated Codex work '
+            f'<span class="filter-note" id="automatedToggleNote">'
+            f'({automated_count} automated rollout{_s(automated_count)} hidden '
+            '&middot; included in totals)</span>'
             '</span></label>')
 
     refreshed = refreshed_at or now_local()

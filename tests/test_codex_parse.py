@@ -186,8 +186,14 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertEqual(list(grouped), [project_path])
         page = render(_merge_timelines(grouped[project_path]))
 
-        self.assertIn('Hide automated Codex sessions', page)
-        self.assertIn('(activity stays in project totals)', page)
+        self.assertIn('Show automated Codex work', page)
+        self.assertIn(
+            '(2 automated rollouts hidden &middot; included in totals)', page)
+        self.assertIn('data-automated-count="2"', page)
+        self.assertIn(
+            'title="Delegated Codex subagent and non-interactive codex exec work.',
+            page)
+        self.assertNotIn('Hide automated Codex sessions', page)
         self.assertEqual(page.count('<section class="session-block" data-automated>'), 2)
         self.assertIn('>codex exec</span>', page)
         self.assertIn('>subagent</span>', page)
@@ -201,6 +207,9 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertIn('<div class="stitle">/root/reviewer</div>', page)
         self.assertIn('spawned by session 01</a>', page)
         self.assertIn("const automatedQuery='show-automated'", page)
+        self.assertIn('automatedToggle.checked=showAutomated', page)
+        self.assertIn("url.searchParams.set(automatedQuery,'1')", page)
+        self.assertIn("url.searchParams.delete(automatedQuery)", page)
         # One interactive session remains visible when the two automated sessions hide.
         self.assertIn(
             '<b id="heroSessionCount">1</b> '

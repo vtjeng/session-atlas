@@ -296,11 +296,13 @@ Automated rollouts are transcript-level work units for delegated Codex subagents
 or non-interactive `codex exec` tasks, not additional human conversations.
 Codex CLI sessions from temporary `codex exec` working directories are grouped
 under the interactive checkout when their Git remotes match. Project pages hide
-`codex exec` and child-agent sessions by default. The page toggle adds
-`?show-automated=1` to the URL. The filter changes the displayed session count
-and the sessions shown. The displayed session total counts non-automated
-conversations; prompts, commands, recovered prompts, activity statistics, token
-totals, and estimated cost continue to include hidden automated sessions.
+`codex exec` and child-agent sessions by default. The `Show automated Codex work`
+control displays the hidden rollout count and adds `?show-automated=1` to the URL
+when enabled. It shows or hides those timeline sections and their ribbon/minimap
+marks. The project summary's session card counts non-automated conversations,
+while the timeline range and navigation count the sections currently shown.
+Prompts, commands, recovered prompts, activity statistics, token totals, and
+estimated cost continue to include hidden automated sessions.
 
 #### Claude Code project paths
 
