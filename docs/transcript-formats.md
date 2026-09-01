@@ -27,6 +27,8 @@ also contain `originator`, `repository_url`, `is_subagent`, `subagent_label`,
 The aggregate `stats.sessions` value counts non-automated conversations;
 `stats.automated_sessions` counts Codex child-agent and `codex exec` rollouts.
 Automated activity remains included in the other aggregate totals.
+Automated rollouts are separate transcript files for delegated work, not
+additional human conversations.
 
 A milestone is an attribution interval. `prompt`, `command`, and `recovered`
 intervals start at retained inputs; `session` intervals collect substantive
@@ -92,9 +94,11 @@ group by `cwd`.
   developer is always injected permissions.
 - Recovered prompts: `build_history_only_timelines()` selects history entries
   whose session ID has no discovered rollout, then maps their working directory
-  through `logs_2.sqlite`. It emits `kind:"recovered"` milestones and does not
-  claim that the missing rollout came from `/btw` or any other specific path.
-  The history sources do not contain assistant replies, tools, tokens, or cost.
+  through `logs_2.sqlite`. It emits `kind:"recovered"` milestones. A recovered
+  prompt is typically associated with a Codex `/btw` fork, but not always; that
+  is an inference from `thread/fork` log records, not a stored `/btw` field.
+  The history sources do not contain assistant replies or enough structured
+  tool, token, or cost data for attribution.
 - Assistant text: `response_item` / `payload.type=="message"` /
   `role=="assistant"` → the first nonempty `text` field in the assistant
   content list.

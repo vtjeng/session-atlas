@@ -248,7 +248,10 @@ as an input labeled `recovered`. It excludes CLI-injected records and
 child-agent assignments, while retaining supported child-agent activity and
 token usage in project totals. Substantive activity before the first retained
 input can appear as a non-prompt entry. Recovery sources do not contain the
-assistant reply, tool activity, token usage, or cost. See
+assistant reply or enough structured tool, token, or cost data to attribute the
+recovered activity. Recovered prompts are typically associated with Codex
+`/btw` forks, but not always; the available history does not establish that
+source for an individual prompt. See
 [Transcript formats](docs/transcript-formats.md) for source paths, record
 fields, and parser mappings.
 
@@ -289,6 +292,8 @@ runs it. Transcript timestamps are stored in UTC.
 
 #### Automated sessions
 
+Automated rollouts are transcript-level work units for delegated Codex subagents
+or non-interactive `codex exec` tasks, not additional human conversations.
 Codex CLI sessions from temporary `codex exec` working directories are grouped
 under the interactive checkout when their Git remotes match. Project pages hide
 `codex exec` and child-agent sessions by default. The page toggle adds

@@ -39,10 +39,13 @@ import pricing
 
 GENERATOR_META = '<meta name="generator" content="session-atlas">'
 PAGE_PROVENANCE = "generated from local transcripts"
+INPUT_COUNT_EXPLANATION = (
+    "Prompts, commands, and recovered prompts counted as inputs."
+)
 RECOVERED_PROMPT_EXPLANATION = (
-    "This prompt was recovered from Codex history because no rollout was found. "
-    "The available sources do not contain the assistant reply, tool activity, "
-    "token usage, or cost."
+    "Recovered from Codex history because no rollout was found; typically "
+    "associated with `/btw`, but not always. The assistant reply and structured "
+    "usage details are unavailable."
 )
 _SAFE_PROJECT_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_PROJECT_SLUG = 80
@@ -1082,9 +1085,13 @@ def render(tl, home=None, refreshed_at=None):
                      f'title="{esc(RECOVERED_PROMPT_EXPLANATION)}">'
                      'recovered</span>')
         elif session.get("is_subagent"):
-            badge = '<span class="origintag" title="spawned Codex subagent">subagent</span>'
+            badge = ('<span class="origintag" '
+                     'title="Delegated Codex subagent work; not a separate human conversation">'
+                     'subagent</span>')
         elif _is_codex_exec(session):
-            badge = '<span class="origintag" title="non-interactive Codex run">codex exec</span>'
+            badge = ('<span class="origintag" '
+                     'title="Non-interactive Codex task; not a separate human conversation">'
+                     'codex exec</span>')
         parent = session.get("parent_session_id")
         relation = session.get("parent_relation")
         if not parent or not relation:
@@ -1424,6 +1431,7 @@ def render(tl, home=None, refreshed_at=None):
         refreshed=refresh_stamp(refreshed),
         n_inputs=_input_count(s),
         input_suffix=_s(_input_count(s)),
+        input_count_title=esc(INPUT_COUNT_EXPLANATION),
         costnote=cost_method_html(s.get("tokens_by_model") or {}, "this project"),
     )
 
@@ -1515,7 +1523,8 @@ def render_index(entries, refreshed_at=None, source_label=None):
     stat_cards = [
         (str(len(entries)), f'project{_s(len(entries))}'),
         (str(tot["sessions"]), f'session{_s(tot["sessions"])}'),
-        (fmt_num(tot["inputs"]), f'input{_s(tot["inputs"])} typed'),
+        (fmt_num(tot["inputs"]), f'input{_s(tot["inputs"])}',
+         INPUT_COUNT_EXPLANATION),
         (fmt_dur(tot["active"]), "active time"),
         (fmt_num(tot["tok"]), "tokens out"),
         (str(n_days), f'day{_s(n_days)} spanned'),
@@ -1597,7 +1606,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   {costnote}
 </header>
 <div class="log">{timeline}</div>
-<footer>{n_inputs} input{input_suffix} typed &middot; {provenance} &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
+<footer><span title="{input_count_title}">{n_inputs} input{input_suffix}</span> &middot; {provenance} &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
 </div>
 <script>{js}</script>
 </body></html>"""

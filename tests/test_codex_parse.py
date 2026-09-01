@@ -191,6 +191,13 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertEqual(page.count('<section class="session-block" data-automated>'), 2)
         self.assertIn('>codex exec</span>', page)
         self.assertIn('>subagent</span>', page)
+        # The badges should explain why these sections are not conversations.
+        self.assertIn(
+            'title="Delegated Codex subagent work; not a separate human conversation"',
+            page)
+        self.assertIn(
+            'title="Non-interactive Codex task; not a separate human conversation"',
+            page)
         self.assertIn('<div class="stitle">/root/reviewer</div>', page)
         self.assertIn('spawned by session 01</a>', page)
         self.assertIn("const automatedQuery='show-automated'", page)
@@ -286,9 +293,14 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertIn('compare the two approaches', page)
         self.assertIn('which one would you choose?', page)
         self.assertNotIn('/status', page)
+        # Explain the common /btw source without presenting it as a certainty.
+        self.assertIn("typically associated with `/btw`, but not always", page)
         self.assertEqual(page.count(RECOVERED_PROMPT_EXPLANATION), 4)
-        self.assertIn('<footer>2 inputs typed', page)
-        self.assertIn('<div class="n">2</div><div class="l lbl">inputs typed</div>', index)
+        self.assertIn(
+            '<footer><span title="Prompts, commands, and recovered prompts '
+            'counted as inputs.">2 inputs</span> &middot;', page)
+        self.assertIn('<div class="n">2</div><div class="l lbl">inputs</div>', index)
+        self.assertIn('title="Prompts, commands, and recovered prompts counted as inputs."', index)
         self.assertIn('<b>2</b> inputs', index)
         self.assertEqual(page.count(
             '<section class="session-block" data-automated>'), 0)
