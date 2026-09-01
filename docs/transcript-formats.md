@@ -24,6 +24,9 @@ activity = ccx_parse._new_activity()   # tools, tool_events(≤40), files,
 Both session types contain `id`, `last_ts`, `title`, and `tool`. Codex sessions
 also contain `originator`, `repository_url`, `is_subagent`, `subagent_label`,
 `parent_session_id`, `parent_relation`, and optional `is_history_only`.
+The aggregate `stats.sessions` value counts non-automated conversations;
+`stats.automated_sessions` counts Codex child-agent and `codex exec` rollouts.
+Automated activity remains included in the other aggregate totals.
 
 A milestone is an attribution interval. `prompt`, `command`, and `recovered`
 intervals start at retained inputs; `session` intervals collect substantive
@@ -80,11 +83,13 @@ First line is `session_meta` → `.payload.{id, cwd, cli_version, timestamp,
 git{branch}? (0.142+)}`. Sessions are date-organized, NOT project-organized —
 group by `cwd`.
 
-- **Typed prompts: ONLY trust `event_msg` / `payload.type=="user_message"`
-  (`.payload.message`).** The `response_item` role:user stream is polluted
-  with injected AGENTS.md (`# AGENTS.md instructions…`),
-  `<environment_context>`, `<user_shell_command>`, `<turn_aborted>`,
-  `<subagent_notification>`; role:developer is always injected permissions.
+- **Typed prompts:** older rollouts use `event_msg` /
+  `payload.type=="user_message"` (`.payload.message`). Current rollouts use
+  `response_item` / `payload.type=="message"` / `role=="user"`; trust those
+  records only when `internal_chat_message_metadata_passthrough.content_item_kinds`
+  is exactly `["user.text"]`. Other user-role records contain injected
+  AGENTS.md, environment, command, interruption, or subagent context; role:
+  developer is always injected permissions.
 - Recovered prompts: `build_history_only_timelines()` selects history entries
   whose session ID has no discovered rollout, then maps their working directory
   through `logs_2.sqlite`. It emits `kind:"recovered"` milestones and does not

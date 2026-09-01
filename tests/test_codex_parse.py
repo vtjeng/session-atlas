@@ -88,6 +88,66 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertEqual(session["originator"], "codex_exec")
         self.assertEqual(session["repository_url"], repository)
 
+    def test_current_user_messages_count_without_counting_context_records(self):
+        # These ordered timestamps and the root ID exercise one Codex turn
+        # boundary without depending on a wall-clock date.
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            # Codex stores injected instructions as a user-role message, but its
+            # content-item kind identifies them as context rather than input.
+            _record("2026-07-20T00:00:01.000Z", "response_item", {
+                "type": "message", "role": "user",
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["agents_md.instructions"]},
+                "content": [{"type": "input_text", "text": "injected instructions"}]}),
+            _record("2026-07-20T00:00:02.000Z", "response_item", {
+                "type": "message", "role": "user",
+                "internal_chat_message_metadata_passthrough": {
+                    "content_item_kinds": ["user.text"]},
+                # This text is the only input that should become a prompt.
+                "content": [{"type": "input_text", "text": "human prompt"}]}),
+            _record("2026-07-20T00:00:03.000Z", "response_item", {
+                "type": "message", "role": "assistant",
+                "content": [{"text": "done"}]}),
+        ]
+
+        _, _, milestones, _, _ = self.parse(records)
+        # The injected context is excluded, leaving one human prompt.
+        self.assertEqual([m["kind"] for m in milestones], ["prompt"])
+        self.assertEqual(milestones[0]["text"], "human prompt")
+
+    def test_stats_count_conversations_without_automated_codex_sessions(self):
+        # The fixed timestamps establish two distinct rollouts in one project.
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo", "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "human prompt"}),
+            _record("2026-07-20T00:01:00.000Z", "session_meta", {
+                "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:01:00.000Z",
+                "thread_source": "subagent"}),
+            _record("2026-07-20T00:01:01.000Z", "response_item", {
+                "type": "function_call", "name": "exec_command",
+                # One tool call keeps the child rollout substantive.
+                "arguments": json.dumps({"cmd": "true"})}),
+        ]
+
+        # This fixture contains one human conversation and one child rollout.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for name, subset in (("root", records[:2]), ("child", records[2:])):
+                path = os.path.join(tmp, f"rollout-2026-07-20T00-00-00-{name}.jsonl")
+                with open(path, "w") as fh:
+                    for record in subset:
+                        fh.write(json.dumps(record) + "\n")
+                paths.append(path)
+            timeline = build_codex_timelines(paths)[0]
+
+        # One root conversation remains after the child rollout is separated.
+        self.assertEqual(timeline["stats"]["sessions"], 1)
+        self.assertEqual(timeline["stats"]["automated_sessions"], 1)
+
     def test_exec_workdirs_group_under_project_and_automated_sessions_can_hide(self):
         # One synthetic remote links the interactive checkout and temporary clone.
         repository = "https://example.com/example-project.git"
@@ -494,7 +554,8 @@ class CodexTokenParsingTests(unittest.TestCase):
 
         self.assertEqual(len(timelines), 1)
         stats = timelines[0]["stats"]
-        self.assertEqual(stats["sessions"], 2)
+        self.assertEqual(stats["sessions"], 1)
+        self.assertEqual(stats["automated_sessions"], 1)
         self.assertEqual(stats["prompts"], 1)
         self.assertEqual(
             stats["tokens_by_model"]["gpt-5.5"],

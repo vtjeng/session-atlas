@@ -504,6 +504,11 @@ def _timeline_dict(project_dir, project_path, sessions, milestones, branches,
     }
 
 
+def _is_automated_session(session):
+    """Whether a session is Codex automation rather than a human conversation."""
+    return bool(session.get("is_subagent")) or session.get("originator") == "codex_exec"
+
+
 def _aggregate(milestones, sessions):
     tools, models, files = Counter(), Counter(), set()
     tin = tout = cread = ccreate = dur = 0
@@ -526,8 +531,12 @@ def _aggregate(milestones, sessions):
             recovered_prompts += 1
     ts = [m["ts"] for m in milestones if m["ts"]]
     all_ts = ts + [s["last_ts"] for s in sessions if s["last_ts"]]
+    automated_sessions = sum(_is_automated_session(s) for s in sessions)
     return {
-        "sessions": len(sessions),
+        # Session totals describe human conversations. Automated Codex
+        # rollouts remain in the activity totals and are exposed separately.
+        "sessions": len(sessions) - automated_sessions,
+        "automated_sessions": automated_sessions,
         "prompts": prompts, "commands": cmds,
         "recovered_prompts": recovered_prompts,
         "assistant_turns": turns,

@@ -252,6 +252,10 @@ assistant reply, tool activity, token usage, or cost. See
 [Transcript formats](docs/transcript-formats.md) for source paths, record
 fields, and parser mappings.
 
+Session totals count non-automated conversations. Codex child-agent and
+`codex exec` rollouts remain in the page and project activity totals, and their
+count is available separately as `automated_sessions`.
+
 ### Timeline behavior
 
 #### Sessions and navigation
@@ -289,9 +293,9 @@ Codex CLI sessions from temporary `codex exec` working directories are grouped
 under the interactive checkout when their Git remotes match. Project pages hide
 `codex exec` and child-agent sessions by default. The page toggle adds
 `?show-automated=1` to the URL. The filter changes the displayed session count
-and the sessions shown. Prompts, commands, recovered prompts, activity
-statistics, token totals, and estimated cost continue to include hidden
-automated sessions.
+and the sessions shown. The displayed session total counts non-automated
+conversations; prompts, commands, recovered prompts, activity statistics, token
+totals, and estimated cost continue to include hidden automated sessions.
 
 #### Claude Code project paths
 

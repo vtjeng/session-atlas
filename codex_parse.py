@@ -35,6 +35,26 @@ _TOOL_NAMES = {"exec_command": "Shell", "exec": "Shell", "write_stdin": "Stdin",
 _PATCH_PREFIXES = ("*** Update File: ", "*** Add File: ", "*** Delete File: ")
 
 
+def _response_user_text(payload):
+    """Return current-format human text, excluding injected user-role context."""
+    if payload.get("role") != "user":
+        return None
+    metadata = payload.get("internal_chat_message_metadata_passthrough") or {}
+    kinds = metadata.get("content_item_kinds")
+    if kinds != ["user.text"]:
+        return None
+    content = payload.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = [block.get("text", "") for block in content
+             if isinstance(block, dict)
+             and block.get("type") in ("input_text", "text")
+             and isinstance(block.get("text"), str)]
+    return "\n".join(parts)
+
+
 def _is_subagent_meta(meta):
     """Whether session metadata identifies a non-user Codex thread."""
     source = meta.get("source")
@@ -370,7 +390,22 @@ def _parse_rollout(path):
             if t == "response_item" and cur is not None:
                 a = cur["activity"]
                 pt = p.get("type")
-                if pt == "message" and p.get("role") == "assistant":
+                if pt == "message" and p.get("role") == "user":
+                    text = _response_user_text(p)
+                    if text is None:
+                        continue
+                    close(cur)
+                    if not text.strip():
+                        cur = None
+                        continue
+                    if is_subagent:
+                        # Assignments in current-format rollouts are response
+                        # items rather than event_msg user_message records.
+                        cur = _new_milestone("session", None, ts, sess_id)
+                    else:
+                        kind = "command" if text.startswith("/") else "prompt"
+                        cur = _new_milestone(kind, text, ts, sess_id)
+                elif pt == "message" and p.get("role") == "assistant":
                     a["assistant_turns"] += 1
                     if model:
                         a["models"][model] += 1
