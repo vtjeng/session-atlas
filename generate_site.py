@@ -408,6 +408,24 @@ def _stat_cards_html(cards):
     return "".join(out)
 
 
+def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
+                        days_active, by_model, projects=None):
+    """Build the shared summary metrics used by project and index heroes."""
+    _, cost_text, cost_label, cost_title = cost_display(by_model or {})
+    cards = []
+    if projects is not None:
+        cards.append((fmt_num(projects), f'project{_s(projects)}'))
+    cards.extend([
+        (fmt_num(sessions), f'session{_s(sessions)}'),
+        (fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
+        (fmt_dur(active_ms), "active time"),
+        (fmt_num(tokens_out), "tokens out"),
+        (fmt_num(days_active), f'day{_s(days_active)} active'),
+        (cost_text, cost_label, cost_title),
+    ])
+    return cards
+
+
 def _session_tools(sessions):
     """Sorted set of the CLI tools that produced these sessions."""
     return sorted({s["tool"] for s in sessions})
@@ -1108,28 +1126,15 @@ def render(tl, home=None, refreshed_at=None):
 
     real_models = list(s["models"])
     multi_model = len(real_models) > 1
-    cost, cost_text, cost_label, cost_title = cost_display(
-        s.get("tokens_by_model") or {})
-
     # ---- hero
-    stat_cards = [
-        (fmt_num(s["prompts"]), f'prompt{_s(s["prompts"])}'),
-        (fmt_num(s["commands"]), f'command{_s(s["commands"])}'),
-        (fmt_num(s["assistant_turns"]),
-         f'assistant turn{_s(s["assistant_turns"])}'),
-        (fmt_num(s["tool_calls"]), f'tool call{_s(s["tool_calls"])}'),
-        (str(len(s["files_changed"])),
-         f'file{_s(len(s["files_changed"]))} changed'),
-        (fmt_dur(s["active_ms"]), "active time"),
-        (fmt_num(s["tokens_out"]), "tokens out"),
-        (str(len(days_active)), f'day{_s(len(days_active))} active'),
-        (cost_text, cost_label, cost_title),
-    ]
-    if s.get("recovered_prompts"):
-        stat_cards.insert(2, (
-            fmt_num(s["recovered_prompts"]),
-            f'recovered prompt{_s(s["recovered_prompts"])}',
-            RECOVERED_PROMPT_EXPLANATION))
+    stat_cards = _summary_stat_cards(
+        sessions=s["sessions"],
+        inputs=_input_count(s),
+        active_ms=s["active_ms"],
+        tokens_out=s["tokens_out"],
+        days_active=len(days_active),
+        by_model=s.get("tokens_by_model"),
+    )
     stats_html = _stat_cards_html(stat_cards)
 
     chips = []
@@ -1518,18 +1523,21 @@ def render_index(entries, refreshed_at=None, source_label=None):
         tot["active"] += s["active_ms"]
         tot["tok"] += s["tokens_out"]
         merge_token_models(all_by_model, s.get("tokens_by_model"))
-    tot_cost, tot_cost_text, tot_cost_label, tot_cost_title = cost_display(all_by_model)
-    n_days = (gl_dt.date() - gf_dt.date()).days + 1
-    stat_cards = [
-        (str(len(entries)), f'project{_s(len(entries))}'),
-        (str(tot["sessions"]), f'session{_s(tot["sessions"])}'),
-        (fmt_num(tot["inputs"]), f'input{_s(tot["inputs"])}',
-         INPUT_COUNT_EXPLANATION),
-        (fmt_dur(tot["active"]), "active time"),
-        (fmt_num(tot["tok"]), "tokens out"),
-        (str(n_days), f'day{_s(n_days)} spanned'),
-        (tot_cost_text, tot_cost_label, tot_cost_title),
-    ]
+    all_days_active = {
+        d.date()
+        for _, tl in entries
+        for m in tl["milestones"]
+        if (d := parse_ts(m["ts"]))
+    }
+    stat_cards = _summary_stat_cards(
+        projects=len(entries),
+        sessions=tot["sessions"],
+        inputs=tot["inputs"],
+        active_ms=tot["active"],
+        tokens_out=tot["tok"],
+        days_active=len(all_days_active),
+        by_model=all_by_model,
+    )
     stats_html = _stat_cards_html(stat_cards)
 
     rows = []

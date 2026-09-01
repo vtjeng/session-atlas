@@ -295,12 +295,21 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertNotIn('/status', page)
         # Explain the common /btw source without presenting it as a certainty.
         self.assertIn("typically associated with `/btw`, but not always", page)
-        self.assertEqual(page.count(RECOVERED_PROMPT_EXPLANATION), 4)
+        self.assertEqual(page.count(RECOVERED_PROMPT_EXPLANATION), 3)
         self.assertIn(
             '<footer><span title="Prompts, commands, and recovered prompts '
             'counted as inputs.">2 inputs</span> &middot;', page)
+        self.assertIn('<div class="n">1</div><div class="l lbl">session</div>', page)
+        self.assertIn('<div class="n">2</div><div class="l lbl">inputs</div>', page)
+        self.assertIn('<div class="l lbl">day active</div>', page)
+        self.assertNotIn('<div class="l lbl">prompts</div>', page)
+        self.assertNotIn('<div class="l lbl">assistant turns</div>', page)
+        self.assertNotIn('<div class="l lbl">tool calls</div>', page)
+        self.assertNotIn('<div class="l lbl">files changed</div>', page)
         self.assertIn('<div class="n">2</div><div class="l lbl">inputs</div>', index)
         self.assertIn('title="Prompts, commands, and recovered prompts counted as inputs."', index)
+        self.assertIn('<div class="l lbl">day active</div>', index)
+        self.assertNotIn('<div class="l lbl">days spanned</div>', index)
         self.assertIn('<b>2</b> inputs', index)
         self.assertEqual(page.count(
             '<section class="session-block" data-automated>'), 0)
