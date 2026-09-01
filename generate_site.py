@@ -412,17 +412,16 @@ def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
                         days_active, by_model, projects=None):
     """Build the shared summary metrics used by project and index heroes."""
     _, cost_text, cost_label, cost_title = cost_display(by_model or {})
-    cards = []
-    if projects is not None:
-        cards.append((fmt_num(projects), f'project{_s(projects)}'))
-    cards.extend([
+    cards = [
         (fmt_num(sessions), f'session{_s(sessions)}'),
         (fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
         (fmt_dur(active_ms), "active time"),
         (fmt_num(tokens_out), "tokens out"),
         (fmt_num(days_active), f'day{_s(days_active)} active'),
         (cost_text, cost_label, cost_title),
-    ])
+    ]
+    if projects is not None:
+        cards.append((fmt_num(projects), f'project{_s(projects)}'))
     return cards
 
 

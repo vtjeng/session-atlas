@@ -311,6 +311,18 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertIn('<div class="l lbl">day active</div>', index)
         self.assertNotIn('<div class="l lbl">days spanned</div>', index)
         self.assertIn('<b>2</b> inputs', index)
+        shared_labels = [
+            '<div class="l lbl">session</div>',
+            '<div class="l lbl">inputs</div>',
+            '<div class="l lbl">day active</div>',
+            '<div class="l lbl">est. cost</div>',
+        ]
+        for summary in (page, index):
+            positions = [summary.find(label) for label in shared_labels]
+            self.assertEqual(positions, sorted(positions))
+        overall_labels = shared_labels + ['<div class="l lbl">project</div>']
+        positions = [index.find(label) for label in overall_labels]
+        self.assertEqual(positions, sorted(positions))
         self.assertEqual(page.count(
             '<section class="session-block" data-automated>'), 0)
 
