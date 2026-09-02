@@ -2,9 +2,10 @@
   <title id="title">Session Atlas</title>
   <rect width="64" height="64" rx="13" fill="#15171b"/>
   <g transform="translate(1 1)">
-    <path d="M16 16c5 0 9-1 12 0 6 2 9 8 10 14-3-3-7-2-11 0-5 3-8 6-8 10 0 5 5 8 11 8 6 0 9-4 9-9 0-5-1-8 0-9 1 4 1 8 1 13 0 3 2 4 4 4 3 0 5-2 6-5"
+    <path d="M16 16c5 0 9-1 12 0 6 2 9 8 10 14-3-3-7-2-11 0-5 3-8 6-8 10 0 5 5 8 11 8 6 0 9-4 9-9 0-5 0-8 0-9 0 4 0 8 0 13 0 3 2 4 4 4 2 0 4-2 5-5"
           fill="none" stroke="#e9e6df" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect x="13" y="13" width="6" height="6" rx="1" fill="#e3b25c"/>
-    <path d="M52 38l-6 3 3 3z" fill="#468cc6"/>
+    <rect x="13" y="13" width="6" height="6" rx="1" fill="#e3b25c"
+          transform="rotate(-7 16 16)"/>
+    <path d="M53 35l-8 3 4 6z" fill="#468cc6"/>
   </g>
 </svg>
