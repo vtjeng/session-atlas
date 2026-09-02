@@ -106,9 +106,9 @@ to the method and token counts behind its cost estimate.
 
 ### Project index cards
 
-The project index compares projects on a shared time axis. Source badges
-distinguish a project with both Claude Code and Codex CLI sessions from a
-Claude-only project.
+The project index places each project's activity bars on one time scale, so
+their timing can be compared directly. Source badges distinguish a project
+with both Claude Code and Codex CLI sessions from a Claude-only project.
 
 ![Two project cards with different transcript sources](docs/images/project-cards.png)
 

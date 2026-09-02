@@ -441,7 +441,7 @@ def _stat_cards_html(cards):
 
 
 def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
-                        days_active, by_model, projects=None):
+                        days_active, by_model):
     """Build the shared summary metrics used by project and index heroes."""
     _, cost_text, cost_label, cost_title = cost_display(by_model or {})
     cards = [
@@ -452,8 +452,6 @@ def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
         (fmt_num(days_active), f'day{_s(days_active)} active'),
         (cost_text, cost_label, cost_title),
     ]
-    if projects is not None:
-        cards.append((fmt_num(projects), f'project{_s(projects)}'))
     return cards
 
 
@@ -1575,8 +1573,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
   <div class="stats">{stats}</div>
   {costnote}
 </header>
-<div class="axislbl"><span>{gfirst}</span><span class="lbl">all timeline entries, shared time axis
-&middot; taller = more work after it</span><span>{glast}</span></div>
+<div class="axislbl"><span>{gfirst}</span><span class="lbl">taller = more activity</span><span>{glast}</span></div>
 <div class="shelf">{rows}</div>
 <footer>{n} projects &middot; {provenance} &middot; refreshed {refreshed}</footer>
 </div>
@@ -1615,7 +1612,6 @@ def render_index(entries, refreshed_at=None, source_label=None):
         if (d := parse_ts(m["ts"]))
     }
     stat_cards = _summary_stat_cards(
-        projects=len(entries),
         sessions=tot["sessions"],
         inputs=tot["inputs"],
         active_ms=tot["active"],
