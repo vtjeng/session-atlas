@@ -9,3 +9,5 @@ __pycache__/
 .uv-cache/
 # pinned documentation-screenshot tooling
 node_modules/
+playwright-report/
+test-results/
