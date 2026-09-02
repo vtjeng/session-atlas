@@ -18,7 +18,7 @@ per 1M tokens:
                the vendor doesn't bill this category, so it's never priced.
 """
 
-AS_OF = "2026-09-01"
+AS_OF = "2026-09-02"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
