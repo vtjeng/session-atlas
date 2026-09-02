@@ -18,12 +18,13 @@ per 1M tokens:
                the vendor doesn't bill this category, so it's never priced.
 """
 
-AS_OF = "2026-08-30"
+AS_OF = "2026-09-01"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
 PRICES = {
     "claude-fable-5":  (10.00, 50.00, 1.000, 12.50, 20.00),
+    "claude-fable-5-1":(10.00, 50.00, 0.250, 12.50, 20.00),
     "claude-opus-5":   ( 5.00, 25.00, 0.500,  6.25, 10.00),
     "claude-opus-4-8": ( 5.00, 25.00, 0.500,  6.25, 10.00),
     "claude-opus-4-6": ( 5.00, 25.00, 0.500,  6.25, 10.00),

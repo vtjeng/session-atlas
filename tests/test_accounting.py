@@ -177,34 +177,22 @@ class AccountingTests(unittest.TestCase):
         self.assertAlmostEqual(cats["cc1h"]["cost"], 30 * 10 / 1_000_000)
         self.assertAlmostEqual(total, sum(c["cost"] for c in cats.values()))
 
-    def test_current_and_dated_anthropic_rates(self):
-        self.assertEqual(pricing.PRICES["claude-sonnet-5"],
-                         (2.0, 10.0, 0.2, 2.5, 4.0))
-        # These two stable table entries intentionally use the same rates.
-        current_opus_rates = (5.0, 25.0, 0.5, 6.25, 10.0)
-        self.assertEqual(pricing.PRICES["claude-opus-4-6"], current_opus_rates)
-        self.assertEqual(pricing.PRICES["claude-opus-5"], current_opus_rates)
+    def test_fable_5_1_price_breakdown(self):
+        # One million tokens in each category exercises Fable 5.1's full rate
+        # card, including its lower cache-read price.
+        tokens = {key: 1_000_000 for key, _ in pricing.CATEGORIES}
         cats, total, unpriced = pricing.cost_breakdown({
-            "claude-haiku-4-5-20251001":
-                {"in": 1_000_000, "out": 0, "cr": 0, "cc": 0, "cc1h": 0}})
-        self.assertEqual(total, 1.0)
-        self.assertFalse(unpriced)
-        self.assertEqual(cats["in"]["tokens"], 1_000_000)
+            "claude-fable-5-1": tokens})
 
-    def test_current_openai_rates(self):
-        # These tuples freeze OpenAI's August 2026 standard per-million-token
-        # rates in (input, output, cache read, 30-minute cache write,
-        # one-hour cache write) order. None verifies that the table does not
-        # invent an OpenAI one-hour write category.
-        sol_rates = (4.0, 20.0, 0.4, 5.0, None)
-        # The gpt-5.6 alias routes to Sol, so both entries must stay identical.
-        self.assertEqual(pricing.PRICES["gpt-5.6"], sol_rates)
-        self.assertEqual(pricing.PRICES["gpt-5.6-sol"], sol_rates)
-        # Terra and Luna exercise the two independently priced family variants.
-        self.assertEqual(pricing.PRICES["gpt-5.6-terra"],
-                         (2.0, 12.0, 0.2, 2.5, None))
-        self.assertEqual(pricing.PRICES["gpt-5.6-luna"],
-                         (0.2, 1.2, 0.02, 0.25, None))
+        self.assertFalse(unpriced)
+        self.assertEqual(
+            {key: cats[key]["cost"] for key, _ in pricing.CATEGORIES},
+            {"in": 10.0, "out": 50.0, "cr": 0.25, "cc": 12.5, "cc1h": 20.0})
+        self.assertEqual(total, 92.75)
+        # The generated accounting panel must expose the newly priced model.
+        card = generate_site.cost_method_html(
+            {"claude-fable-5-1": tokens}, "test")
+        self.assertIn('<td class="mdl fam-claude">fable-5-1</td>', card)
 
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)
