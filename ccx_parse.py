@@ -108,6 +108,14 @@ def _content_text(content):
     return None
 
 
+def _record_source_id(record):
+    """Return the durable source key used to anchor a parsed milestone."""
+    message = record.get("message")
+    message_id = message.get("id") if isinstance(message, dict) else None
+    return (record.get("uuid") or message_id
+            or f"line-{record.get('_source_line', 'unknown')}")
+
+
 def classify_user(record):
     """Return (kind, text) for a genuine human input, else None.
 
@@ -252,7 +260,13 @@ def iter_json_records(path, diagnostics=None):
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                record = json.loads(line)
+                # The record UUID is preferred for stable in-page anchors. The
+                # line fallback remains stable when a transcript only grows by
+                # appending records, which is how the CLI writes these files.
+                if isinstance(record, dict):
+                    record["_source_line"] = line_number
+                yield record
             except json.JSONDecodeError:
                 _parse_diagnostic(
                     diagnostics, path, line_number, "malformed JSON transcript record")
@@ -313,9 +327,10 @@ def merge_token_models(dst, src):
     return dst
 
 
-def _new_milestone(kind, text, ts, session):
+def _new_milestone(kind, text, ts, session, source_id=None):
     """A milestone with a fresh activity accumulator. Both parsers emit this shape."""
     return {"kind": kind, "text": text, "ts": ts, "session": session,
+            "source_id": source_id,
             "activity": _new_activity()}
 
 
@@ -469,7 +484,7 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
     for first_ts, sid, recs in per_file:
         sess = {"id": sid, "last_ts": first_ts, "title": None, "tool": "claude"}
         # session-start pseudo-milestone captures pre-first-prompt activity
-        cur = _new_milestone("session", None, first_ts, sid)
+        cur = _new_milestone("session", None, first_ts, sid, "session-start")
         for r in recs:
             t = r.get("type")
             ts = r.get("timestamp")
@@ -488,7 +503,8 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
                         if "input" in text:
                             close(cur)
                             cur = _new_milestone(
-                                "command", _format_terminal(text), ts, sid)
+                                "command", _format_terminal(text), ts, sid,
+                                _record_source_id(r))
                             cur["terminal"] = text
                         elif cur and cur.get("terminal") and cur["kind"] == "command":
                             _merge_terminal_parts(cur["terminal"], text)
@@ -496,11 +512,13 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
                         else:
                             close(cur)
                             cur = _new_milestone(
-                                "terminal", _format_terminal(text), ts, sid)
+                                "terminal", _format_terminal(text), ts, sid,
+                                _record_source_id(r))
                             cur["terminal"] = text
                     else:
                         close(cur)
-                        cur = _new_milestone(kind, text, ts, sid)
+                        cur = _new_milestone(
+                            kind, text, ts, sid, _record_source_id(r))
                 continue
 
             if cur is None:

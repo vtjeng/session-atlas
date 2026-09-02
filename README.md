@@ -279,9 +279,9 @@ section. Codex child rollouts with a known parent use the same presentation:
 their work is retained in a timestamped `triggered <agent> subagent` entry in
 the parent session.
 
-Entries use anchors such as `#s02-04`, where `02` is the session number and
-`04` is the entry number within that session. Session headings use anchors such
-as `#s02`.
+Entries and session headings use opaque, source-backed anchors. Their values do
+not depend on the session or entry display numbers, so adding another tracked
+conversation does not retarget an existing link.
 
 The sticky bar shows the current session title. Use its previous and next
 buttons, or `j` and `k`, to move between sessions. Click the project name to

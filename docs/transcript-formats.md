@@ -13,7 +13,7 @@ merges them per repository path.
 timeline = {project_dir, project_name, project_path, git_branches,
             sessions:  [{id, last_ts, title, tool: "claude"|"codex", ...}],
             milestones:[{kind: "prompt"|"command"|"terminal"|"recovered"|"session"|"subagent", text, ts,
-                         session: <session id>, activity}],
+                         session: <session id>, source_id, activity}],
             diagnostics: [<skipped-record warning>],
             stats: ccx_parse._aggregate(milestones, sessions)}
 activity = ccx_parse._new_activity()   # tools, tool_events(≤40), files,
@@ -34,7 +34,9 @@ remain standalone. Automated activity remains included in the other aggregate
 totals. Automated rollouts are separate transcript files for delegated work,
 not additional human conversations.
 
-A milestone is an attribution interval. `prompt`, `command`, and `recovered`
+A milestone is an attribution interval. `source_id` identifies the source record
+or append-only source position used for stable in-page anchors. `prompt`,
+`command`, and `recovered`
 intervals start at retained inputs; `session` intervals collect substantive
 machine activity before the first retained input or at a child-task boundary;
 `subagent` intervals mark delegated Codex work at the child rollout's start

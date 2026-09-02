@@ -59,6 +59,13 @@ def esc(s):
     return html.escape(s if s is not None else "", quote=True)
 
 
+def _stable_anchor(prefix, *parts):
+    """Hash source identity into a short, URL-safe in-page anchor."""
+    raw = "\x1f".join("" if part is None else str(part) for part in parts)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+    return f"{prefix}-{digest}"
+
+
 def _s(n):
     """Plural suffix: '' for exactly one, 's' otherwise."""
     return "" if n == 1 else "s"
@@ -831,14 +838,14 @@ function buildMap(){
   const sessColor=n=>col[(n-1)%col.length];
   track.textContent='';
   sessions.forEach((s,i)=>{                       // one color block per session
-    const n=parseInt(s.id.slice(1),10)||1;
+    const n=Number(s.dataset.sessionIndex)||1;
     const top=docTop(s), bot=(i+1<sessions.length)?docTop(sessions[i+1]):H;
     const b=document.createElement('div'); b.className='mm-sess';
     b.style.top=(top/H*100)+'%'; b.style.height=Math.max(0,(bot-top)/H*100)+'%';
     b.style.background=sessColor(n); track.appendChild(b);
   });
   entries.forEach(e=>{                             // one tick per entry, length=work
-    const n=parseInt(e.id.slice(1),10)||1;
+    const n=Number(e.dataset.sessionIndex)||1;
     const w=parseFloat(e.dataset.w)||0;
     const t=document.createElement('div'); t.className='mm-tick';
     t.style.top=(docTop(e)/H*100)+'%';
@@ -1118,7 +1125,7 @@ def render(tl, home=None, refreshed_at=None):
             return badge
         if parent in sess_idx:
             parent_num = sess_idx[parent]
-            link = (f'<a class="forktag" href="#s{parent_num:02d}"'
+            link = (f'<a class="forktag" href="#{session_anchors[parent]}"'
                     f' title="{esc(relation)} conversation {esc(parent[:8])}">'
                     f'{esc(relation)} session {parent_num:02d}</a>')
         else:
@@ -1170,16 +1177,29 @@ def render(tl, home=None, refreshed_at=None):
                       f' &middot; {n_days} day{_s(n_days)}'
                       f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}')
 
-    # ---- navigation: readable per-entry anchors "sNN-EE" (session number, entry
-    # within session), a sticky session stepper, and the vertical minimap rail
+    # ---- navigation: source-backed opaque anchors, a sticky session stepper,
+    # and the vertical minimap rail. Display numbers remain positional, but
+    # links use session/source identity so adding a conversation cannot retarget
+    # an existing fragment.
     sess_idx = {x["id"]: i + 1 for i, x in enumerate(rendered_sessions)}
     sess_tool = {x["id"]: x["tool"] for x in rendered_sessions}
+    session_anchors = {
+        sid: _stable_anchor("session", sess_tool.get(sid), sid)
+        for sid in sess_idx
+    }
     sess_automated = {x["id"]: _is_automated_codex(x) for x in rendered_sessions}
-    entry_ids, _seen, sess_first = [], Counter(), {}
+    entry_ids, anchor_counts, _seen, sess_first = [], Counter(), Counter(), {}
     for m in ms:
         sid = m["session"]
         _seen[sid] += 1
-        entry_ids.append(f's{sess_idx.get(sid, 1):02d}-{_seen[sid]:02d}')
+        source_id = m.get("source_id")
+        if not source_id:
+            source_id = "fallback:{}:{}:{}".format(
+                m.get("kind", ""), m.get("ts", ""), m.get("text", ""))
+        base = _stable_anchor("entry", sess_tool.get(sid), sid, source_id)
+        occurrence = anchor_counts[base]
+        anchor_counts[base] += 1
+        entry_ids.append(base if occurrence == 0 else f"{base}-{occurrence + 1}")
         sess_first.setdefault(sid, m["ts"])   # session start, for the time ribbon
     # per-entry work magnitude (0..1, sqrt) sets minimap tick length
     vmax_w = max((mag(m) for m in ms), default=0)
@@ -1228,7 +1248,7 @@ def render(tl, home=None, refreshed_at=None):
             for x in rendered_sessions:
                 num = sess_idx[x["id"]]
                 dots.append(
-                    f'<button class="sdot" data-s="s{num:02d}"'
+                    f'<button class="sdot" data-s="{session_anchors[x["id"]]}"'
                     f'{" data-automated" if sess_automated.get(x["id"]) else ""}'
                     f' style="left:{rf(sess_first.get(x["id"]) or first)}%;{_sc_var(num)}"'
                     f' title="session {num:02d} &middot; {esc(fmt_date(sess_first.get(x["id"])))}"'
@@ -1283,14 +1303,15 @@ def render(tl, home=None, refreshed_at=None):
             scost, stext, _, _ = cost_display(g.get("by_model") or {})
             if scost or pricing.cost_breakdown(g.get("by_model") or {})[2]:
                 bits.append(f'~{stext}')
-            sid = f"s{num:02d}"
+            session_id = session_anchors[cur_session]
             auto_attr = " data-automated" if sess_automated.get(cur_session) else ""
             nodes.append(f'<section class="session-block"{auto_attr}>')
             # data-t: session title, surfaced live in the sticky crumb as this
             # header scrolls past the reading line (so it tracks the session stepper).
             nodes.append(
-                f'<div class="sess" id="{sid}" data-t="{esc(stitle)}" style="{_sc_var(num)}">'
-                f'<a class="lbl" href="#{sid}"><span class="sw"></span>'
+                f'<div class="sess" id="{session_id}" data-t="{esc(stitle)}" '
+                f'data-session-index="{num}" style="{_sc_var(num)}">'
+                f'<a class="lbl" href="#{session_id}"><span class="sw"></span>'
                 f'<span class="sn">session {num:02d}</span> '
                 f'&middot; {esc(cur_session[:8])}</a> '
                 f'{tool_pill(sess_tool.get(cur_session))}'
@@ -1433,7 +1454,8 @@ def render(tl, home=None, refreshed_at=None):
         quiet = "" if ro else " quiet"
         w = math.sqrt(mag(m) / vmax_w) if vmax_w else 0.0
         nodes.append(
-            f'<div class="entry {kind}{quiet}" id="{entry_ids[i]}" data-w="{w:.3f}"'
+            f'<div class="entry {kind}{quiet}" id="{entry_ids[i]}" '
+            f'data-session-index="{sess_idx.get(m["session"], 1)}" data-w="{w:.3f}"'
             f' data-rf="{rf(m["ts"])}"'
             f' style="{_sc_var(sess_idx.get(m["session"], 1))}">'
             f'<a class="emark" href="#{entry_ids[i]}" aria-label="scroll to this entry"></a>'

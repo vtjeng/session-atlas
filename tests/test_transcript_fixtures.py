@@ -1,12 +1,14 @@
+import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 import warnings
 
-from ccx_parse import build_timeline
+from ccx_parse import _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
 from generate_site import _allocate_project_slugs, render
 
@@ -14,7 +16,48 @@ from generate_site import _allocate_project_slugs, render
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
 
 
+def _entry_ids(page):
+    return re.findall(r'<div class="entry [^"]*" id="([^"]+)"', page)
+
+
+def _session_ids(page):
+    return re.findall(r'<div class="sess" id="([^"]+)"', page)
+
+
+def _fragment_refs(page):
+    return re.findall(r'href="#([^"]+)"', page)
+
+
+def _element_ids(page):
+    return re.findall(r' id="([^"]+)"', page)
+
+
 class TranscriptFixtureTests(unittest.TestCase):
+    def test_anchors_ignore_new_earlier_session(self):
+        project_dir = os.path.join(
+            FIXTURES, "claude", "-home-demo-src-example-project")
+        timeline = build_timeline(project_dir)
+        original = render(timeline)
+
+        augmented = copy.deepcopy(timeline)
+        extra_sid = "earlier-session"
+        augmented["sessions"].insert(0, {
+            "id": extra_sid,
+            "last_ts": "2026-03-14T16:00:00.000Z",
+            "title": "Earlier session",
+            "tool": "claude",
+        })
+        augmented["milestones"].insert(0, _new_milestone(
+            "prompt", "An earlier conversation", "2026-03-14T16:00:01.000Z",
+            extra_sid, "earlier-record"))
+        augmented["milestones"][1]["text"] = "The same source record, revised"
+        updated = render(augmented)
+
+        self.assertEqual(_entry_ids(original), _entry_ids(updated)[1:])
+        self.assertEqual(_session_ids(original), _session_ids(updated)[1:])
+        for page in (original, updated):
+            self.assertTrue(set(_fragment_refs(page)) <= set(_element_ids(page)))
+
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:
             site = os.path.join(tmp, "site")
@@ -206,6 +249,8 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertEqual(set(claude), set(codex))
         self.assertEqual(
             set(claude["milestones"][0]), set(codex["milestones"][0]))
+        self.assertTrue(all(m["source_id"] for m in claude["milestones"]))
+        self.assertTrue(all(m["source_id"] for m in codex["milestones"]))
         self.assertEqual(
             set(claude["milestones"][0]["activity"]),
             set(codex["milestones"][0]["activity"]),

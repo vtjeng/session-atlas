@@ -1,11 +1,14 @@
+import copy
 from collections import Counter
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
 
-from ccx_parse import _has_substantive_activity, _new_activity, _timeline_dict
+from ccx_parse import (_has_substantive_activity, _new_activity, _new_milestone,
+                       _timeline_dict)
 from codex_parse import (_parse_rollout, build_codex_timelines,
                          build_history_only_timelines)
 from generate_site import (MINIMAP_MAX_ENTRIES, RECOVERED_PROMPT_EXPLANATION,
@@ -28,6 +31,22 @@ def _token_count(ts, total_input, cached_input, output):
     })
 
 
+def _entry_ids(page):
+    return re.findall(r'<div class="entry [^"]*" id="([^"]+)"', page)
+
+
+def _session_ids(page):
+    return re.findall(r'<div class="sess" id="([^"]+)"', page)
+
+
+def _fragment_refs(page):
+    return re.findall(r'href="#([^"]+)"', page)
+
+
+def _element_ids(page):
+    return re.findall(r' id="([^"]+)"', page)
+
+
 class CodexTokenParsingTests(unittest.TestCase):
     def parse(self, records):
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,6 +64,66 @@ class CodexTokenParsingTests(unittest.TestCase):
         return _timeline_dict(
             "/tmp/codex", cwd, [session], milestones, branches,
             diagnostics=diagnostics)
+
+    def test_anchors_ignore_new_earlier_codex_session(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo",
+                "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "review it"}),
+            _record("2026-07-20T00:00:02.000Z", "response_item", {
+                "type": "message", "role": "assistant",
+                "content": [{"text": "done"}]}),
+        ]
+        timeline = self.timeline(records)
+        original = render(timeline)
+
+        augmented = copy.deepcopy(timeline)
+        extra_sid = "earlier"
+        augmented["sessions"].insert(0, {
+            "id": extra_sid,
+            "last_ts": "2026-07-19T00:00:00.000Z",
+            "title": "Earlier session",
+            "tool": "codex",
+        })
+        augmented["milestones"].insert(0, _new_milestone(
+            "prompt", "An earlier conversation", "2026-07-19T00:00:01.000Z",
+            extra_sid, "earlier-record"))
+        updated = render(augmented)
+
+        self.assertEqual(_entry_ids(original), _entry_ids(updated)[1:])
+        self.assertEqual(_session_ids(original), _session_ids(updated)[1:])
+        for page in (original, updated):
+            self.assertTrue(set(_fragment_refs(page)) <= set(_element_ids(page)))
+
+    def test_minimap_uses_explicit_session_indices(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo",
+                "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "review it"}),
+        ]
+        timeline = self.timeline(records)
+        timeline["sessions"].append({
+            "id": "second",
+            "last_ts": "2026-07-21T00:00:00.000Z",
+            "title": "Second session",
+            "tool": "codex",
+        })
+        timeline["milestones"].append(_new_milestone(
+            "prompt", "A later conversation", "2026-07-21T00:00:01.000Z",
+            "second", "later-record"))
+
+        page = render(timeline)
+
+        self.assertIn('data-session-index="1"', page)
+        self.assertIn('data-session-index="2"', page)
+        self.assertIn("Number(s.dataset.sessionIndex)", page)
+        self.assertIn("Number(e.dataset.sessionIndex)", page)
+        self.assertNotIn("parseInt(s.id.slice(1),10)", page)
+        self.assertNotIn("parseInt(e.id.slice(1),10)", page)
 
     def test_cumulative_usage_deduplicates_snapshots_and_splits_cached_input(self):
         records = [

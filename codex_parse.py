@@ -92,6 +92,16 @@ def _ts_ms(ts):
     return dt.timestamp() * 1000 if dt else None
 
 
+def _event_source_id(payload, line_number):
+    """Return an event ID, falling back to its append-only source line."""
+    message = payload.get("message")
+    message_id = message.get("id") if isinstance(message, dict) else None
+    for candidate in (payload.get("id"), message_id):
+        if candidate is not None and str(candidate):
+            return str(candidate)
+    return f"line-{line_number}"
+
+
 def _patch_files(patch, cwd):
     files = []
     for line in patch.splitlines():
@@ -195,7 +205,7 @@ def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
                     continue
                 ts = _history_ts(item.get("ts"))
                 if ts:
-                    history.setdefault(sid, []).append((ts, text))
+                    history.setdefault(sid, []).append((ts, text, line_number))
     except OSError:
         return []
 
@@ -216,8 +226,10 @@ def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
                     "parent_relation": None, "is_history_only": True,
                 }
                 milestones = []
-                for ts, text in prompts:
-                    milestones.append(_new_milestone("recovered", text, ts, sid))
+                for ts, text, line_number in prompts:
+                    milestones.append(_new_milestone(
+                        "recovered", text, ts, sid,
+                        f"history-line-{line_number}"))
                 project = projects.setdefault(
                     cwd, {"sessions": [], "milestones": [], "branches": Counter()})
                 project["sessions"].append(session)
@@ -300,7 +312,8 @@ def _parse_rollout(path):
                         "subagent_label": _subagent_label(p),
                         "parent_session_id": parent_session_id,
                         "parent_relation": parent_relation}
-                cur = _new_milestone("session", None, start, sess_id)
+                cur = _new_milestone(
+                    "session", None, start, sess_id, "session-start")
                 replaying_fork = bool(p.get("forked_from_id"))
                 start_dt = parse_iso(start)
                 session_started_s = int(start_dt.timestamp()) if start_dt else None
@@ -328,7 +341,9 @@ def _parse_rollout(path):
                         and p["started_at"] >= session_started_s):
                     replaying_fork = False
                     close(cur)
-                    cur = _new_milestone("session", None, ts, sess_id)
+                    cur = _new_milestone(
+                        "session", None, ts, sess_id,
+                        f"fork-start-{line_number}")
                 continue
 
             if ts:
@@ -345,7 +360,9 @@ def _parse_rollout(path):
                     # user_message. Split them here so idle time and activity
                     # stay scoped to the assignment that produced them.
                     close(cur)
-                    cur = _new_milestone("session", None, ts, sess_id)
+                    cur = _new_milestone(
+                        "session", None, ts, sess_id,
+                        f"task-start-{line_number}")
                     continue
                 if pt == "user_message":
                     close(cur)
@@ -353,14 +370,18 @@ def _parse_rollout(path):
                     if not text:
                         cur = None
                         continue
+                    source_id = _event_source_id(p, line_number)
                     if is_subagent:
                         # This is an agent assignment or follow-up, not text
                         # typed by the human. Keep its work and usage without
                         # inflating the site's prompt count.
-                        cur = _new_milestone("session", None, ts, sess_id)
+                        cur = _new_milestone(
+                            "session", None, ts, sess_id,
+                            f"assignment-{source_id}")
                     else:
                         kind = "command" if text.startswith("/") else "prompt"
-                        cur = _new_milestone(kind, text, ts, sess_id)
+                        cur = _new_milestone(
+                            kind, text, ts, sess_id, source_id)
                     continue
                 if cur is None:
                     continue
@@ -401,13 +422,17 @@ def _parse_rollout(path):
                     if not text.strip():
                         cur = None
                         continue
+                    source_id = _event_source_id(p, line_number)
                     if is_subagent:
                         # Assignments in current-format rollouts are response
                         # items rather than event_msg user_message records.
-                        cur = _new_milestone("session", None, ts, sess_id)
+                        cur = _new_milestone(
+                            "session", None, ts, sess_id,
+                            f"assignment-{source_id}")
                     else:
                         kind = "command" if text.startswith("/") else "prompt"
-                        cur = _new_milestone(kind, text, ts, sess_id)
+                        cur = _new_milestone(
+                            kind, text, ts, sess_id, source_id)
                 elif pt == "message" and p.get("role") == "assistant":
                     a["assistant_turns"] += 1
                     if model:
@@ -545,7 +570,7 @@ def _associate_codex_subagents(sessions, milestones):
         label = child.get("subagent_label")
         text = f"triggered {label} subagent" if label else "triggered subagent"
         attached = _new_milestone(
-            "subagent", text, start, parent_id)
+            "subagent", text, start, parent_id, f"child-{child_id}")
         attached["activity"] = activity
         by_session.setdefault(parent_id, []).append(attached)
         folded.add(child_id)
