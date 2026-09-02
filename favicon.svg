@@ -1,8 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
   <title id="title">Session Atlas</title>
   <rect width="64" height="64" rx="13" fill="#15171b"/>
-  <path d="M48 16H25a9 9 0 0 0 0 18h14a9 9 0 0 1 0 18H16" fill="none"
-        stroke="#e9e6df" stroke-width="5" stroke-linecap="round"/>
-  <rect x="44" y="12" width="8" height="8" rx="1" fill="#e3b25c"/>
-  <circle cx="16" cy="52" r="4" fill="#468cc6"/>
+  <g transform="translate(0 -2)">
+    <path d="M48 16H25a9 9 0 0 0 0 18h14a9 9 0 0 1 0 18H16" fill="none"
+          stroke="#e9e6df" stroke-width="5" stroke-linecap="round"/>
+    <rect x="44" y="12" width="8" height="8" rx="1" fill="#e3b25c"/>
+    <circle cx="16" cy="52" r="4" fill="#468cc6"/>
+  </g>
 </svg>
