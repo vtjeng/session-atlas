@@ -138,6 +138,13 @@ entries.
 
 ![Session content with a prompt, token usage, files, and tool calls](docs/images/timeline-entry.png)
 
+### Expanded session details
+
+The expanded session log separates response excerpts, changed files, and tool
+activity while preserving the chronological tool entries.
+
+![Expanded session details with response excerpts, files, and tools](docs/images/expanded-timeline-entry.png)
+
 ## Advanced tasks
 
 ### Refresh automatically with systemd

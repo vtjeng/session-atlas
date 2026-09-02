@@ -83,6 +83,20 @@ const CAPTURE_PADDING = 24;
       'the first synthetic session',
       'timeline-entry.png',
     );
+    const firstSession = await requireFirstElement(
+      '.session-block',
+      'the first synthetic session',
+    );
+    const log = firstSession.locator('details.more').first();
+    if (await log.count() === 0) {
+      throw new Error('The first synthetic session is missing an expandable log');
+    }
+    await log.evaluate(node => { node.open = true; });
+    await capture(
+      '.session-block',
+      'the first synthetic session with its log expanded',
+      'expanded-timeline-entry.png',
+    );
 
     const pricing = await requireFirstElement('details.pricing', 'the cost breakdown');
     await pricing.evaluate(node => { node.open = true; });

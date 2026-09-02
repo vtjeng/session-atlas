@@ -162,7 +162,7 @@ class TranscriptFixtureTests(unittest.TestCase):
             ],
         )
         page = render(timeline)
-        self.assertIn("assistant response excerpts", page)
+        self.assertIn("response excerpts", page)
         self.assertIn("The bounded cache now invalidates after writes", page)
 
     def test_codex_fixture_statistics(self):
@@ -195,7 +195,13 @@ class TranscriptFixtureTests(unittest.TestCase):
             ],
         )
         page = render(timeline)
-        self.assertIn("3 responses", page)
+        self.assertIn("3 response excerpts", page)
+        self.assertIn(
+            '<summary>3 response excerpts · 1 file · 2 tool calls</summary>', page)
+        self.assertIn(
+            'class="response-heading">response excerpts', page)
+        self.assertIn('class="response-meta">response 1', page)
+        self.assertIn('class="tools-label">tools used:</span>', page)
         self.assertIn("The failing case isolates stale entries after a write", page)
         self.assertIn(
             'title="Assistant turns attributed to this model; not sessions"',

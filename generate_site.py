@@ -59,6 +59,27 @@ def esc(s):
     return html.escape(s if s is not None else "", quote=True)
 
 
+_MD_CODE = re.compile(r"`([^`\n]+)`")
+_MD_STRONG = re.compile(r"\*\*([^*\n]+?)\*\*")
+_MD_EM = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+
+
+def inline_markdown(s):
+    """Render a safe, small inline-Markdown subset for response excerpts."""
+    tokens = []
+
+    def stash(tag):
+        tokens.append(tag)
+        return f"\x00{len(tokens) - 1}\x00"
+
+    text = _MD_CODE.sub(
+        lambda match: stash(f'<code>{match.group(1)}</code>'), esc(s))
+    text = _MD_STRONG.sub(r"<strong>\1</strong>", text)
+    text = _MD_EM.sub(r"<em>\1</em>", text)
+    return re.sub(
+        r"\x00(\d+)\x00", lambda match: tokens[int(match.group(1))], text)
+
+
 def _stable_anchor(prefix, *parts):
     """Hash source identity into a short, URL-safe in-page anchor."""
     raw = "\x1f".join("" if part is None else str(part) for part in parts)
@@ -716,6 +737,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .rostat .mdl.fam-claude{color:var(--claude)}
 .rostat .mdl.fam-gpt{color:var(--codex)}
 .rotools{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 14px}
+.rotools .tools-label{color:var(--faint);letter-spacing:.04em}
 .rotools .tn{color:var(--machine)}
 details.more{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px}
 details.more>summary{cursor:pointer;font-size:10.5px;letter-spacing:.1em;
@@ -724,10 +746,18 @@ details.more>summary::-webkit-details-marker{display:none}
 details.more>summary::before{content:"\\25B8  "}
 details.more[open]>summary::before{content:"\\25BE  "}
 details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.responses{margin-top:15px}
+.detail-section+.detail-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.response-heading,.detail-heading{margin-bottom:10px;font-size:9.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint)}
+.response-item+.response-item{margin-top:9px}
+.response-meta{margin-bottom:3px;font-size:10.5px;font-style:italic;
+  letter-spacing:.02em;color:var(--faint)}
+.response-text{font-family:var(--serif);font-size:12.5px;line-height:1.45;color:var(--dim)}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
-.files{margin:10px 0}
-.files .fh{margin-bottom:5px}
+.files{margin-top:10px}
+.files .detail-heading{margin-bottom:5px}
 .files code{display:block;font-size:11.5px;color:var(--ink);padding:1px 0}
 .telog{margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:2px 14px;
   font-size:11px}
@@ -1376,10 +1406,6 @@ def render(tl, home=None, refreshed_at=None):
                 mcls = f"mdl fam-{mfam}" if mfam else "mdl"
                 stat_bits.append(f'<span class="{mcls}">{esc(clean_model(dom))}</span>')
             responses = a.get("responses") or []
-            if len(responses) > 1:
-                stat_bits.append(
-                    f'<span><b>{len(responses)}</b> '
-                    f'response{_s(len(responses))}</span>')
             subs = a.get("subagents") or []
             if subs:
                 sub_by_model = {}
@@ -1393,13 +1419,17 @@ def render(tl, home=None, refreshed_at=None):
                 stat_bits.append(f'<span class="sub">{bit}</span>')
 
             tools = sorted(a["tools"].items(), key=lambda kv: -kv[1])
-            tool_bits = [f'<span><span class="tn">{esc(k)}</span> &times;{v}</span>'
-                         for k, v in tools[:5]]
-            if len(tools) > 5:
-                tool_bits.append(f'<span>+{len(tools) - 5} more</span>')
+            tool_bits = []
+            if tools:
+                tool_bits.append('<span class="tools-label">tools used:</span>')
+                tool_bits.extend(
+                    f'<span><span class="tn">{esc(k)}</span> &times;{v}</span>'
+                    for k, v in tools[:5])
+                if len(tools) > 5:
+                    tool_bits.append(f'<span>+{len(tools) - 5} more</span>')
 
             detail_bits = []
-            if len(responses) > 1:
+            if responses:
                 response_rows = []
                 for num, response in enumerate(responses, 1):
                     if isinstance(response, dict):
@@ -1412,18 +1442,20 @@ def render(tl, home=None, refreshed_at=None):
                     if response_ts:
                         response_label += f" · {fmt_clock(response_ts)}"
                     response_rows.append(
-                        f'<div class="response-item"><div class="response-meta lbl">'
+                        f'<div class="response-item"><div class="response-meta">'
                         f'{esc(response_label)}</div><div class="response-text">'
-                        f'{esc(response_text)}</div></div>')
+                        f'{inline_markdown(response_text)}</div></div>')
+                response_heading = f'response excerpt{_s(len(responses))}'
                 detail_bits.append(
-                    '<div class="responses"><div class="fh lbl">assistant response '
-                    f'excerpts</div>{"".join(response_rows)}</div>')
+                    f'<div class="detail-section responses"><div class="response-heading">'
+                    f'{response_heading}</div>{"".join(response_rows)}</div>')
             elif a.get("gist"):
                 detail_bits.append(f'<div class="gist">{esc(a["gist"])}</div>')
             if a["files"]:
                 rows = "".join(f'<code>{esc(short_path(f, tl))}</code>' for f in a["files"])
                 detail_bits.append(
-                    f'<div class="files"><div class="fh lbl">files changed</div>{rows}</div>')
+                    f'<div class="detail-section files"><div class="detail-heading">'
+                    f'files changed</div>{rows}</div>')
             if a["tool_events"]:
                 # collapse consecutive identical calls into one ×n row
                 runs = [(n, l, sum(1 for _ in g)) for (n, l), g in
@@ -1433,18 +1465,23 @@ def render(tl, home=None, refreshed_at=None):
                     f'<span class="tn">{esc(n)}{" &times;" + str(c) if c > 1 else ""}</span>'
                     f'<span class="tl">{esc(l)}</span>'
                     for n, l, c in runs)
-                detail_bits.append(f'<div class="telog">{evs}</div>')
+                detail_bits.append(
+                    f'<div class="detail-section tools"><div class="detail-heading">'
+                    f'tools</div><div class="telog">{evs}</div></div>')
             detail = ""
             if detail_bits:
-                sumbits = ["log"]
-                if len(responses) > 1:
-                    sumbits.insert(0, f'{len(responses)} responses')
+                sumbits = []
+                if responses:
+                    sumbits.append(
+                        f'{len(responses)} response excerpt{_s(len(responses))}')
                 if a["files"]:
                     sumbits.append(
                         f'{len(a["files"])} file{_s(len(a["files"]))}')
                 calls = sum(a["tools"].values())
                 if calls:
                     sumbits.append(f'{calls} tool calls')
+                if not sumbits:
+                    sumbits.append("details")
                 detail = (f'<details class="more"><summary>{esc(" · ".join(sumbits))}</summary>'
                           f'{"".join(detail_bits)}</details>')
 

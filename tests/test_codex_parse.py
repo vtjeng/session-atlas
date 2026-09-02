@@ -125,6 +125,28 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertNotIn("parseInt(s.id.slice(1),10)", page)
         self.assertNotIn("parseInt(e.id.slice(1),10)", page)
 
+    def test_single_response_uses_excerpt_layout_and_inline_markdown(self):
+        records = [
+            _record("2026-07-20T00:00:00.000Z", "session_meta", {
+                "id": "root", "cwd": "/repo",
+                "timestamp": "2026-07-20T00:00:00.000Z"}),
+            _record("2026-07-20T00:00:01.000Z", "event_msg", {
+                "type": "user_message", "message": "review it"}),
+            _record("2026-07-20T00:00:02.000Z", "response_item", {
+                "type": "message", "role": "assistant",
+                "content": [{"text": "Use **bold** and `inline code`."}]}),
+        ]
+
+        page = render(self.timeline(records))
+
+        self.assertIn(
+            'class="response-heading">response excerpt', page)
+        self.assertIn('class="response-meta">response 1', page)
+        self.assertIn('<strong>bold</strong>', page)
+        self.assertIn('<code>inline code</code>', page)
+        self.assertNotIn('class="gist"', page)
+        self.assertIn('<summary>1 response excerpt</summary>', page)
+
     def test_cumulative_usage_deduplicates_snapshots_and_splits_cached_input(self):
         records = [
             _record("2026-07-20T00:00:00.000Z", "session_meta", {
