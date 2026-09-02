@@ -43,10 +43,6 @@ PAGE_PROVENANCE = "generated from local transcripts"
 INPUT_COUNT_EXPLANATION = (
     "Prompts, commands, and recovered prompts counted as inputs."
 )
-AUTOMATED_WORK_EXPLANATION = (
-    "Delegated Codex subagent and non-interactive codex exec work. The control "
-    "shows or hides these timeline sections; project totals include their activity."
-)
 RECOVERED_PROMPT_EXPLANATION = (
     "Recovered from Codex history because no rollout was found; typically "
     "associated with `/btw`, but not always. The assistant reply and structured "
@@ -646,14 +642,6 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .forktag{margin-left:7px;font-size:9px;color:var(--faint);text-decoration:none}
 a.forktag:hover,a.forktag:focus-visible{color:var(--machine);text-decoration:underline;
   outline:none}
-.sessionfilter{display:inline-flex;align-items:center;gap:7px;margin-left:auto;
-  padding:3px 9px;border:1px solid var(--line);border-radius:4px;background:var(--panel);
-  color:var(--dim);font-size:11px;cursor:pointer;white-space:nowrap}
-.sessionfilter:hover{border-color:var(--machine);color:var(--ink)}
-.sessionfilter:focus-within{outline:2px solid var(--machine);outline-offset:2px}
-.sessionfilter input{margin:0;accent-color:var(--bar)}
-.sessionfilter .filter-note{color:var(--faint)}
-
 /* ---- log ---- */
 .log{position:relative;padding:8px 0 60px}
 .log::before{content:"";position:absolute;left:68px;top:24px;bottom:24px;width:1px;
@@ -674,9 +662,6 @@ a.forktag:hover,a.forktag:focus-visible{color:var(--machine);text-decoration:und
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
 .entry.quiet{padding-bottom:20px}
-.session-block[data-automated],.etick[data-automated],.sdot[data-automated]{display:none}
-html.show-automated .session-block[data-automated]{display:block}
-html.show-automated .etick[data-automated],html.show-automated .sdot[data-automated]{display:block}
 /* clickable timeline marker; the one at the reading position is ringed (JS .current) */
 .emark{position:absolute;left:56px;top:0;width:24px;height:24px;z-index:1;
   cursor:pointer;display:block;text-decoration:none}
@@ -693,6 +678,12 @@ html.show-automated .etick[data-automated],html.show-automated .sdot[data-automa
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:62ch;
   white-space:pre-wrap;overflow-wrap:anywhere}
+.terminal{font-family:var(--mono);font-size:12.5px;line-height:1.45;max-width:100%;
+  white-space:nowrap;overflow-x:auto;color:var(--dim)}
+.terminal .cmdname{color:var(--human)}
+.terminal .term-sep{padding:0 8px;color:var(--faint)}
+.terminal .term-out{color:var(--dim)}
+.terminal .term-err{color:var(--human)}
 .ask.clip{max-height:148px;overflow:hidden;cursor:pointer;
   -webkit-mask-image:linear-gradient(#000 64%,transparent);
   mask-image:linear-gradient(#000 64%,transparent)}
@@ -772,7 +763,6 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 @media (max-width:640px){
   .stats{grid-template-columns:repeat(2,1fr)}
   h1{font-size:30px}
-  .sessionfilter{margin-left:0;white-space:normal}
   .log::before,.emark{display:none}
   .entry,.sess,.gapnote{padding-left:0}
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
@@ -797,32 +787,9 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 """
 
 JS = """
-const automatedQuery='show-automated';
-const showAutomated=new URL(location.href).searchParams.get(automatedQuery)==='1';
-document.documentElement.classList.toggle('show-automated',showAutomated);
-const automatedToggle=document.getElementById('automatedToggle');
-if(automatedToggle){
-  automatedToggle.checked=showAutomated;
-  const automatedToggleNote=document.getElementById('automatedToggleNote');
-  if(automatedToggleNote){
-    const n=Number(automatedToggle.dataset.automatedCount)||0;
-    automatedToggleNote.textContent=`(${n} automated rollout${n===1?'':'s'} ${showAutomated?'shown':'hidden'} · included in totals)`;
-  }
-  automatedToggle.addEventListener('change',()=>{
-    const url=new URL(location.href);
-    if(automatedToggle.checked) url.searchParams.set(automatedQuery,'1');
-    else url.searchParams.delete(automatedQuery);
-    location.href=url;
-  });
-}
-const included=el=>showAutomated||!el.closest('[data-automated]');
 const smooth=matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
-const entries=[...document.querySelectorAll('.entry')].filter(included);
-const sessions=[...document.querySelectorAll('.sess')].filter(included);
-const heroSessionCount=document.getElementById('heroSessionCount');
-const heroSessionLabel=document.getElementById('heroSessionLabel');
-if(heroSessionCount) heroSessionCount.textContent=sessions.length;
-if(heroSessionLabel) heroSessionLabel.textContent=sessions.length===1?'session':'sessions';
+const entries=[...document.querySelectorAll('.entry')];
+const sessions=[...document.querySelectorAll('.sess')];
 const docTop=el=>el.getBoundingClientRect().top+window.scrollY;
 const docH=()=>document.documentElement.scrollHeight||1;
 
@@ -924,7 +891,7 @@ const sessCur=document.getElementById('sessCur');    // counter, present iff >1 
 const sessTotal=document.getElementById('sessTotal');
 const sessNav=document.querySelector('.sessnav');
 const snav=[...document.querySelectorAll('.snav')];  // prev/next, present iff >1 session
-const dots=[...document.querySelectorAll('.sdot')].filter(included); // visible session starts
+const dots=[...document.querySelectorAll('.sdot')]; // session starts
 if(sessTotal) sessTotal.textContent=sessions.length;
 if(sessNav) sessNav.hidden=sessions.length<2;
 let target=null, settleT=0, curSessIdx=0, painted=-1;
@@ -1046,6 +1013,25 @@ if(refreshEls.length){
 """
 
 
+def _terminal_ask(m):
+    """Render Claude's bash input/output wrappers as one compact terminal line."""
+    parts = m.get("terminal") or {}
+    bits = []
+    if parts.get("input"):
+        bits.append(f'<span class="cmdname">{esc(parts["input"])}</span>')
+    if parts.get("stdout"):
+        if bits:
+            bits.append('<span class="term-sep">&rarr;</span>')
+        bits.append(f'<span class="term-out">{esc(parts["stdout"])}</span>')
+    if parts.get("stderr"):
+        if bits:
+            bits.append('<span class="term-sep">&middot;</span>')
+        bits.append(f'<span class="term-err">stderr: {esc(parts["stderr"])}</span>')
+    if not bits:
+        bits.append(esc(m.get("text") or "terminal output"))
+    return f'<div class="ask terminal">{"".join(bits)}</div>'
+
+
 def render(tl, home=None, refreshed_at=None):
     """``home``: href of the index page (e.g. ``../index.html``), or None when
     this project was rendered on its own and no index exists to link back to."""
@@ -1153,9 +1139,12 @@ def render(tl, home=None, refreshed_at=None):
     for m in real_models:
         fam = model_family(m)
         cls = f"chip model fam-{fam}" if fam else "chip model"
-        chips.append(f'<span class="{cls}">{esc(clean_model(m))} <b>{s["models"][m]}</b></span>')
-    for b in list(tl.get("git_branches", {}))[:3]:
-        chips.append(f'<span class="chip">&#x2387; {esc(b)}</span>')
+        model_turns = s["models"][m]
+        chips.append(
+            f'<span class="{cls}" '
+            f'title="Assistant turns attributed to this model; not sessions">'
+            f'{esc(clean_model(m))} <b>{model_turns}</b> '
+            f'turn{_s(model_turns)}</span>')
     for k, v in list(s["tools"].items())[:6]:
         chips.append(f'<span class="chip"><b>{v}</b> {esc(k)}</span>')
     diagnostic_count = len(tl.get("diagnostics") or [])
@@ -1167,22 +1156,7 @@ def render(tl, home=None, refreshed_at=None):
 
     rendered_sessions = [session for session in tl["sessions"]
                          if session["id"] in sess_agg]
-    automated_sessions = [session for session in rendered_sessions
-                          if _is_automated_codex(session)]
     total = len(rendered_sessions)
-    visible_total = total - len(automated_sessions)
-    session_filter = ""
-    if automated_sessions:
-        automated_count = len(automated_sessions)
-        session_filter = (
-            f'<label class="sessionfilter" title="{esc(AUTOMATED_WORK_EXPLANATION)}">'
-            f'<input id="automatedToggle" type="checkbox" '
-            f'data-automated-count="{automated_count}">'
-            '<span>Show automated Codex work '
-            f'<span class="filter-note" id="automatedToggleNote">'
-            f'({automated_count} automated rollout{_s(automated_count)} hidden '
-            '&middot; included in totals)</span>'
-            '</span></label>')
 
     refreshed = refreshed_at or now_local()
     range_html = ""
@@ -1190,8 +1164,6 @@ def render(tl, home=None, refreshed_at=None):
         n_days = (last_dt.date() - first_dt.date()).days + 1 if first_dt and last_dt else 1
         range_html = (f'<b>{esc(fmt_date(first))}</b> &rarr; <b>{esc(fmt_date(last))}</b>'
                       f' &middot; {n_days} day{_s(n_days)}'
-                      f' &middot; <b id="heroSessionCount">{visible_total}</b> '
-                      f'<span id="heroSessionLabel">session{_s(visible_total)}</span>'
                       f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}')
 
     # ---- navigation: readable per-entry anchors "sNN-EE" (session number, entry
@@ -1227,12 +1199,11 @@ def render(tl, home=None, refreshed_at=None):
 
     stepper = ""
     if total > 1:
-        hidden = " hidden" if visible_total < 2 else ""
-        stepper = (f'<div class="sessnav"{hidden}>'
+        stepper = ('<div class="sessnav">'
                    f'<button class="snav" data-d="-1" title="previous session (k)"'
                    f' aria-label="previous session">&lsaquo;</button>'
                    f'<span class="sesscount">session <b id="sessCur">1</b> / '
-                   f'<b id="sessTotal">{visible_total}</b></span>'
+                   f'<b id="sessTotal">{total}</b></span>'
                    f'<button class="snav" data-d="1" title="next session (j)"'
                    f' aria-label="next session">&rsaquo;</button></div>')
 
@@ -1334,13 +1305,18 @@ def render(tl, home=None, refreshed_at=None):
 
         if kind == "session":
             ask = '<div class="ask-open">activity without a human prompt</div>'
+        elif kind == "terminal":
+            ask = _terminal_ask(m)
         else:
             txt = m["text"] or ""
             clip = " clip" if len(txt) > 700 else ""
             if kind == "command":
-                name, _, rest = txt.partition(" ")
-                ask = (f'<div class="ask{clip}"><span class="cmdname">{esc(name)}</span>'
-                       f'{esc(rest)}</div>')
+                if m.get("terminal"):
+                    ask = _terminal_ask(m)
+                else:
+                    name, _, rest = txt.partition(" ")
+                    ask = (f'<div class="ask{clip}"><span class="cmdname">{esc(name)}</span>'
+                           f'{esc(rest)}</div>')
             elif kind == "recovered":
                 ask = (f'<div class="ask{clip}">{esc(txt)}</div>'
                        f'<div class="recovered-note">'
@@ -1371,6 +1347,11 @@ def render(tl, home=None, refreshed_at=None):
                 mfam = model_family(dom)
                 mcls = f"mdl fam-{mfam}" if mfam else "mdl"
                 stat_bits.append(f'<span class="{mcls}">{esc(clean_model(dom))}</span>')
+            responses = a.get("responses") or []
+            if len(responses) > 1:
+                stat_bits.append(
+                    f'<span><b>{len(responses)}</b> '
+                    f'response{_s(len(responses))}</span>')
             subs = a.get("subagents") or []
             if subs:
                 sub_by_model = {}
@@ -1390,7 +1371,26 @@ def render(tl, home=None, refreshed_at=None):
                 tool_bits.append(f'<span>+{len(tools) - 5} more</span>')
 
             detail_bits = []
-            if a.get("gist"):
+            if len(responses) > 1:
+                response_rows = []
+                for num, response in enumerate(responses, 1):
+                    if isinstance(response, dict):
+                        response_text = response.get("text") or ""
+                        response_ts = response.get("ts")
+                    else:
+                        response_text = str(response)
+                        response_ts = None
+                    response_label = f"response {num}"
+                    if response_ts:
+                        response_label += f" · {fmt_clock(response_ts)}"
+                    response_rows.append(
+                        f'<div class="response-item"><div class="response-meta lbl">'
+                        f'{esc(response_label)}</div><div class="response-text">'
+                        f'{esc(response_text)}</div></div>')
+                detail_bits.append(
+                    '<div class="responses"><div class="fh lbl">assistant response '
+                    f'excerpts</div>{"".join(response_rows)}</div>')
+            elif a.get("gist"):
                 detail_bits.append(f'<div class="gist">{esc(a["gist"])}</div>')
             if a["files"]:
                 rows = "".join(f'<code>{esc(short_path(f, tl))}</code>' for f in a["files"])
@@ -1409,6 +1409,8 @@ def render(tl, home=None, refreshed_at=None):
             detail = ""
             if detail_bits:
                 sumbits = ["log"]
+                if len(responses) > 1:
+                    sumbits.insert(0, f'{len(responses)} responses')
                 if a["files"]:
                     sumbits.append(
                         f'{len(a["files"])} file{_s(len(a["files"]))}')
@@ -1446,7 +1448,6 @@ def render(tl, home=None, refreshed_at=None):
         range=range_html,
         stats=stats_html,
         chips="".join(chips),
-        session_filter=session_filter,
         minimap=minimap, topbar=topbar,
         timeline="".join(nodes),
         last_activity=esc(fmt_ts(last)),
@@ -1627,7 +1628,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   <div class="path">{path}</div>
   <div class="range">{range}</div>
   <div class="stats">{stats}</div>
-  <div class="meta-row">{chips}{session_filter}</div>
+  <div class="meta-row">{chips}</div>
   {costnote}
 </header>
 <div class="log">{timeline}</div>

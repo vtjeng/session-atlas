@@ -14,9 +14,9 @@ import sqlite3
 from collections import Counter
 from datetime import datetime, timezone
 
-from ccx_parse import (_add_tokens, _finalize_milestone, _first_line,
-                       _new_activity, _new_milestone, _parse_diagnostic,
-                       _timeline_dict, parse_iso)
+from ccx_parse import (_add_response, _add_tokens, _finalize_milestone,
+                       _first_line, _new_activity, _new_milestone,
+                       _parse_diagnostic, _timeline_dict, parse_iso)
 
 CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
 CODEX_HISTORY = os.path.expanduser("~/.codex/history.jsonl")
@@ -412,12 +412,11 @@ def _parse_rollout(path):
                     a["assistant_turns"] += 1
                     if model:
                         a["models"][model] += 1
-                    if not a["gist"]:
-                        content = p.get("content") or []
-                        txt = next((b.get("text", "") for b in content
-                                    if isinstance(b, dict) and b.get("text")), "")
-                        if txt.strip():
-                            a["gist"] = txt.strip()[:280]
+                    content = p.get("content") or []
+                    response_text = "\n".join(
+                        b.get("text", "").strip() for b in content
+                        if isinstance(b, dict) and b.get("text", "").strip())
+                    _add_response(a, response_text, ts, model)
                 elif pt in ("function_call", "custom_tool_call", "web_search_call",
                             "tool_search_call"):
                     if pt == "web_search_call":
@@ -466,6 +465,8 @@ def _merge_subagent_activity(dst, src):
     dst["assistant_turns"] += src.get("assistant_turns", 0)
     dst["models"].update(src.get("models") or {})
     dst["subagents"].extend(src.get("subagents") or [])
+    dst["responses"].extend(src.get("responses") or [])
+    dst["responses"] = dst["responses"][:40]
     if not dst.get("gist") and src.get("gist"):
         dst["gist"] = src["gist"]
     if not dst.get("title") and src.get("title"):

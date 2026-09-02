@@ -164,7 +164,7 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertIn("triggered /my/subagent/name subagent", page)
         self.assertNotIn('<section class="session-block" data-automated>', page)
 
-    def test_exec_workdirs_group_under_project_and_automated_sessions_can_hide(self):
+    def test_exec_workdirs_group_under_project_and_automated_sessions_are_visible(self):
         # One synthetic remote links the interactive checkout and temporary clone.
         repository = "https://example.com/example-project.git"
 
@@ -203,15 +203,8 @@ class CodexTokenParsingTests(unittest.TestCase):
         merged = _merge_timelines(grouped[project_path])
         page = render(merged)
 
-        self.assertIn('Show automated Codex work', page)
-        self.assertIn(
-            '(1 automated rollout hidden &middot; included in totals)', page)
-        self.assertIn('data-automated-count="1"', page)
-        self.assertIn(
-            'title="Delegated Codex subagent and non-interactive codex exec work.',
-            page)
-        self.assertNotIn('Hide automated Codex sessions', page)
         self.assertEqual(page.count('<section class="session-block" data-automated>'), 1)
+        self.assertEqual(page.count('<section class="session-block"'), 2)
         self.assertIn('>codex exec</span>', page)
         self.assertIn('triggered /root/reviewer subagent', page)
         self.assertEqual(merged["stats"]["sessions"], 1)
@@ -223,14 +216,15 @@ class CodexTokenParsingTests(unittest.TestCase):
         self.assertIn(
             'title="Non-interactive Codex task; not a separate human conversation"',
             page)
-        self.assertIn("const automatedQuery='show-automated'", page)
-        self.assertIn('automatedToggle.checked=showAutomated', page)
-        self.assertIn("url.searchParams.set(automatedQuery,'1')", page)
-        self.assertIn("url.searchParams.delete(automatedQuery)", page)
-        # One interactive session remains visible when the two automated sessions hide.
+        self.assertNotIn('Show automated Codex work', page)
+        self.assertNotIn('automatedToggle', page)
+        self.assertNotIn('show-automated', page)
+        # The session total appears in the summary cards, not again beside the
+        # refresh timestamp. The sticky navigator still tracks visible sessions.
+        self.assertNotIn('id="heroSessionCount"', page)
+        self.assertNotIn('id="heroSessionLabel"', page)
         self.assertIn(
-            '<b id="heroSessionCount">1</b> '
-            '<span id="heroSessionLabel">session</span>', page)
+            '<span class="sesscount">session <b id="sessCur">1</b> /', page)
         # All three $5 sessions remain in the project summary while two are hidden.
         self.assertIn('<div class="n">$15</div>', page)
 

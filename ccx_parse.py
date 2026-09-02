@@ -6,6 +6,7 @@
 schema and source-record mappings.
 """
 import glob
+import html
 import json
 import os
 import re
@@ -29,6 +30,9 @@ def parse_iso(ts):
 
 INJECTED_TAGS = ("task-notification", "system-reminder", "command-message",
                  "command-args", "local-command-stdout", "local-command-stderr")
+_BASH_TAG_RE = re.compile(r"<bash-(input|stdout|stderr)>(.*?)</bash-\1>", re.S)
+_MAX_RESPONSE_EXCERPTS = 40
+_MAX_RESPONSE_CHARS = 600
 
 # tool_use blocks that mutate the working tree -> "files changed"
 WRITE_TOOLS = {"Edit", "Write", "NotebookEdit", "MultiEdit"}
@@ -105,8 +109,11 @@ def _content_text(content):
 
 
 def classify_user(record):
-    """Return (kind, text) for a genuine human input, else None. kind is
-    "prompt" (free text) or "command" (slash command, unwrapped to '/name args')."""
+    """Return (kind, text) for a genuine human input, else None.
+
+    ``terminal`` records are Claude's user-side wrappers around a shell input
+    and its stdout/stderr; the parser joins adjacent records into one line.
+    """
     # isSidechain marks a subagent's own side-conversation; its user-role turns
     # are not things the human typed, so they must never become milestones.
     if record.get("type") != "user" or record.get("isMeta") or record.get("isSidechain"):
@@ -115,6 +122,10 @@ def classify_user(record):
     if text is None:
         return None
     stripped = text.lstrip()
+
+    terminal = _bash_parts(text)
+    if terminal:
+        return ("terminal", terminal)
 
     if stripped.startswith("<command-name>"):
         name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
@@ -131,6 +142,61 @@ def classify_user(record):
     if stripped.startswith("[Request interrupted") or not stripped:
         return None
     return ("prompt", text.strip())
+
+
+def _flatten_terminal_text(text):
+    """Decode transcript HTML entities and make terminal output one line."""
+    return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
+
+
+def _bash_parts(text):
+    """Return normalized bash wrapper contents, or ``None`` for ordinary text."""
+    matches = _BASH_TAG_RE.findall(text or "")
+    if not matches:
+        return None
+    parts = {}
+    for kind, value in matches:
+        normalized = _flatten_terminal_text(value)
+        parts[kind] = " ".join(filter(None, (parts.get(kind), normalized)))
+    return parts
+
+
+def _format_terminal(parts):
+    """Return a compact plain-text representation of one terminal exchange."""
+    command = parts.get("input", "")
+    stdout = parts.get("stdout", "")
+    stderr = parts.get("stderr", "")
+    bits = [command] if command else []
+    if stdout:
+        bits.append(stdout)
+    if stderr:
+        bits.append(f"stderr: {stderr}")
+    return " | ".join(bits) or "terminal output"
+
+
+def _merge_terminal_parts(dst, src):
+    """Add a subsequent stdout/stderr wrapper to a pending terminal input."""
+    for key, value in src.items():
+        if value:
+            dst[key] = " ".join(filter(None, (dst.get(key), value)))
+
+
+def _add_response(activity, text, ts=None, model=None):
+    """Keep a bounded excerpt for every distinct nonempty assistant response."""
+    text = (text or "").strip()
+    if not text:
+        return
+    responses = activity["responses"]
+    if responses and responses[-1]["text"] == text and responses[-1].get("ts") == ts:
+        return
+    if len(responses) >= _MAX_RESPONSE_EXCERPTS:
+        return
+    excerpt = text[:_MAX_RESPONSE_CHARS]
+    if len(text) > _MAX_RESPONSE_CHARS:
+        excerpt += "..."
+    responses.append({"text": excerpt, "ts": ts, "model": model})
+    if not activity["gist"]:
+        activity["gist"] = text[:280]
 
 
 # --------------------------------------------------------------------------- #
@@ -211,6 +277,7 @@ def _new_activity():
             "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_create": 0,
             "tokens_by_model": {},  # model -> {in,out,cr,cc,cc1h}; drives cost estimates
             "subagents": [],        # per-transcript {by_model,start} runs folded in here (display only)
+            "responses": [],        # bounded assistant-response excerpts
             "duration_ms": 0, "assistant_turns": 0, "models": Counter(), "gist": None,
             "title": None}
 
@@ -393,6 +460,7 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
     real_cwd = None      # exact project path (munging is lossy; records aren't)
     git_branches = Counter()
     msg_usage = {}       # message.id -> field-wise-max usage already billed (see below)
+    response_ids = set() # Claude streams one message across multiple records
 
     def close(m):
         if m:
@@ -415,8 +483,24 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
             if t == "user":
                 got = classify_user(r)
                 if got:
-                    close(cur)
-                    cur = _new_milestone(got[0], got[1], ts, sid)
+                    kind, text = got
+                    if kind == "terminal":
+                        if "input" in text:
+                            close(cur)
+                            cur = _new_milestone(
+                                "command", _format_terminal(text), ts, sid)
+                            cur["terminal"] = text
+                        elif cur and cur.get("terminal") and cur["kind"] == "command":
+                            _merge_terminal_parts(cur["terminal"], text)
+                            cur["text"] = _format_terminal(cur["terminal"])
+                        else:
+                            close(cur)
+                            cur = _new_milestone(
+                                "terminal", _format_terminal(text), ts, sid)
+                            cur["terminal"] = text
+                    else:
+                        close(cur)
+                        cur = _new_milestone(kind, text, ts, sid)
                 continue
 
             if cur is None:
@@ -455,13 +539,19 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
                     # "<synthetic>" is a placeholder for turns with no real model call.
                     if model and model != "<synthetic>":
                         a["models"][model] += 1
-                for b in msg.get("content", []) or []:
+                content = msg.get("content", []) or []
+                response_text = "\n".join(
+                    b.get("text", "").strip() for b in content
+                    if isinstance(b, dict) and b.get("type") == "text"
+                    and b.get("text", "").strip())
+                if response_text and mid not in response_ids:
+                    _add_response(a, response_text, ts, model)
+                    response_ids.add(mid)
+                for b in content:
                     if not isinstance(b, dict):
                         continue
                     bt = b.get("type")
-                    if bt == "text" and not a["gist"] and b.get("text", "").strip():
-                        a["gist"] = b["text"].strip()[:280]
-                    elif bt == "tool_use":
+                    if bt == "tool_use":
                         name = b.get("name", "?")
                         a["tools"][name] += 1
                         label, changed = _tool_label(name, b.get("input"))

@@ -111,6 +111,16 @@ class TranscriptFixtureTests(unittest.TestCase):
                 "/home/demo/src/example-project/tests/test_cache.py",
             ],
         )
+        self.assertEqual(
+            [response["text"] for response in timeline["milestones"][0]["activity"]["responses"]],
+            [
+                "The project page can reuse a bounded cache and invalidate it after writes.",
+                "The bounded cache now invalidates after writes, with a regression test for stale entries.",
+            ],
+        )
+        page = render(timeline)
+        self.assertIn("assistant response excerpts", page)
+        self.assertIn("The bounded cache now invalidates after writes", page)
 
     def test_codex_fixture_statistics(self):
         # The single Codex rollout contributes one prompt, two tool calls, and
@@ -133,6 +143,58 @@ class TranscriptFixtureTests(unittest.TestCase):
             timeline["stats"]["files_changed"],
             ["/home/demo/src/example-project/tests/test_cache.py"],
         )
+        self.assertEqual(
+            [response["text"] for response in timeline["milestones"][0]["activity"]["responses"]],
+            [
+                "I will run the focused cache test before changing the invalidation path.",
+                "The failing case isolates stale entries after a write.",
+                "The regression test now covers stale entries after a write.",
+            ],
+        )
+        page = render(timeline)
+        self.assertIn("3 responses", page)
+        self.assertIn("The failing case isolates stale entries after a write", page)
+        self.assertIn(
+            'title="Assistant turns attributed to this model; not sessions"',
+            page)
+        self.assertIn("<b>3</b> turns</span>", page)
+        self.assertNotIn("&#x2387;", page)
+
+    def test_bash_wrappers_render_as_one_terminal_line(self):
+        records = [
+            {
+                "type": "user", "timestamp": "2026-03-15T18:00:00.000Z",
+                "cwd": "/home/demo/src/example-project",
+                "message": {"role": "user", "content": "<bash-input>git push</bash-input>"},
+            },
+            {
+                "type": "user", "timestamp": "2026-03-15T18:00:01.000Z",
+                "cwd": "/home/demo/src/example-project",
+                "message": {"role": "user", "content":
+                            "<bash-stdout>To https://example.com/example-project.git\n"
+                            "   d7f1f1c..19cf64e  master -&gt; master</bash-stdout>"
+                            "<bash-stderr></bash-stderr>"},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bash-wrapper.jsonl")
+            with open(path, "w", encoding="utf-8") as fh:
+                for record in records:
+                    fh.write(json.dumps(record) + "\n")
+            timeline = build_timeline(tmp, session_paths=[path])
+
+        self.assertEqual(timeline["stats"]["commands"], 1)
+        self.assertEqual(timeline["stats"]["prompts"], 0)
+        self.assertEqual(len(timeline["milestones"]), 1)
+        self.assertEqual(
+            timeline["milestones"][0]["text"],
+            "git push | To https://example.com/example-project.git d7f1f1c..19cf64e master -> master",
+        )
+        page = render(timeline)
+        self.assertIn('class="ask terminal"', page)
+        self.assertNotIn("<bash-input>", page)
+        self.assertIn("git push", page)
+        self.assertIn("master -&gt; master", page)
 
     def test_parser_outputs_share_the_documented_timeline_schema(self):
         claude_dir = os.path.join(

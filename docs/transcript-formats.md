@@ -12,13 +12,14 @@ merges them per repository path.
 ```
 timeline = {project_dir, project_name, project_path, git_branches,
             sessions:  [{id, last_ts, title, tool: "claude"|"codex", ...}],
-            milestones:[{kind: "prompt"|"command"|"recovered"|"session"|"subagent", text, ts,
+            milestones:[{kind: "prompt"|"command"|"terminal"|"recovered"|"session"|"subagent", text, ts,
                          session: <session id>, activity}],
             diagnostics: [<skipped-record warning>],
             stats: ccx_parse._aggregate(milestones, sessions)}
 activity = ccx_parse._new_activity()   # tools, tool_events(≤40), files,
                                        # tokens_*, tokens_by_model, duration_ms,
-                                       # assistant_turns, models, gist, title
+                                       # assistant_turns, models, gist,
+                                       # responses(≤40 excerpts), title
 ```
 
 Both session types contain `id`, `last_ts`, `title`, and `tool`. Codex sessions
@@ -54,6 +55,10 @@ intervals are discarded.
   and harness injections — `isMeta`, `isSidechain` (subagent's own turns!),
   tool_results, `<task-notification>`, `<system-reminder>`,
   `[Request interrupted…]`.
+- `<bash-input>`, `<bash-stdout>`, and `<bash-stderr>` wrappers are normalized;
+  adjacent input and output records become one single-line `command` entry.
+- Assistant text: each nonempty `text` block is retained as a bounded response
+  excerpt; repeated Claude stream records for one message are deduplicated.
 - Tokens: `message.usage` (input/output/cache_read/cache_creation). CAUTION:
   Claude Code writes one record per content block (thinking / text / each
   tool_use). Records for one `message.id` can repeat or accumulate usage in
@@ -104,8 +109,8 @@ group by `cwd`.
   The history sources do not contain assistant replies or enough structured
   tool, token, or cost data for attribution.
 - Assistant text: `response_item` / `payload.type=="message"` /
-  `role=="assistant"` → the first nonempty `text` field in the assistant
-  content list.
+  `role=="assistant"` → every nonempty text block in the assistant content list
+  is retained as a bounded response excerpt.
 - Tool calls: `response_item`/`function_call` — name in `.payload.name`,
   args in `.payload.arguments` (a JSON-encoded STRING; parse for `.cmd`).
   File edits: `custom_tool_call` name `apply_patch`, patch in `.payload.input`
