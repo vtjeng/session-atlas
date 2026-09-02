@@ -15,8 +15,8 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from ccx_parse import (_add_tokens, _finalize_milestone, _first_line,
-                       _new_milestone, _parse_diagnostic, _timeline_dict,
-                       parse_iso)
+                       _new_activity, _new_milestone, _parse_diagnostic,
+                       _timeline_dict, parse_iso)
 
 CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
 CODEX_HISTORY = os.path.expanduser("~/.codex/history.jsonl")
@@ -66,16 +66,19 @@ def _subagent_label(meta):
     source = meta.get("source")
     subagent = source.get("subagent") if isinstance(source, dict) else None
     if not isinstance(subagent, dict):
-        return None
+        return meta.get("agent_path") or meta.get("agent_nickname")
     spawned = subagent.get("thread_spawn")
     if isinstance(spawned, dict) and spawned.get("agent_path"):
         return spawned["agent_path"]
-    return subagent.get("other")
+    return (subagent.get("other") or meta.get("agent_path")
+            or meta.get("agent_nickname"))
 
 
 def _subagent_parent(meta):
     if meta.get("forked_from_id"):
         return meta["forked_from_id"], "fork of"
+    if meta.get("parent_thread_id"):
+        return meta["parent_thread_id"], "spawned by"
     source = meta.get("source")
     subagent = source.get("subagent") if isinstance(source, dict) else None
     spawned = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
@@ -453,6 +456,111 @@ def _parse_rollout(path):
     return cwd, sess, milestones, branches, diagnostics
 
 
+def _merge_subagent_activity(dst, src):
+    """Fold one Codex rollout's activity into an attached parent entry."""
+    dst["tools"].update(src.get("tools") or {})
+    dst["tool_events"].extend(src.get("tool_events") or [])
+    dst["tool_events"] = dst["tool_events"][:40]
+    dst["files"].extend(src.get("files") or [])
+    dst["duration_ms"] += src.get("duration_ms", 0)
+    dst["assistant_turns"] += src.get("assistant_turns", 0)
+    dst["models"].update(src.get("models") or {})
+    dst["subagents"].extend(src.get("subagents") or [])
+    if not dst.get("gist") and src.get("gist"):
+        dst["gist"] = src["gist"]
+    if not dst.get("title") and src.get("title"):
+        dst["title"] = src["title"]
+
+    # _add_tokens keeps the flat totals and the per-model cost map in lockstep.
+    by_model = src.get("tokens_by_model") or {}
+    if by_model:
+        for model, tokens in by_model.items():
+            _add_tokens(dst, model, tokens.get("in", 0), tokens.get("out", 0),
+                        tokens.get("cr", 0), tokens.get("cc", 0),
+                        tokens.get("cc1h", 0))
+    else:
+        # Be tolerant of hand-built/shared fixtures that only carry flat totals.
+        dst["tokens_in"] += src.get("tokens_in", 0)
+        dst["tokens_out"] += src.get("tokens_out", 0)
+        dst["cache_read"] += src.get("cache_read", 0)
+        dst["cache_create"] += src.get("cache_create", 0)
+    dst["files"] = sorted(set(dst["files"]))
+
+
+def _associate_codex_subagents(sessions, milestones):
+    """Attach known child rollouts to the Codex sessions that spawned them.
+
+    Claude presents nested work inside its parent session. Codex records that
+    work as separate rollout files, so make the same presentation choice when
+    the child metadata gives us a parent ID. Rollouts whose parent is absent
+    remain standalone automated sessions and can still be filtered by the UI.
+    """
+    by_id = {session["id"]: session for session in sessions}
+    by_session = {sid: [] for sid in by_id}
+    for milestone in milestones:
+        by_session.setdefault(milestone["session"], []).append(milestone)
+
+    candidates = [session for session in sessions
+                  if session.get("is_subagent")
+                  and session.get("parent_session_id") in by_id]
+    if not candidates:
+        return
+
+    def depth(session_id, seen=None):
+        seen = set() if seen is None else seen
+        if session_id in seen:
+            return 0
+        seen.add(session_id)
+        parent = by_id[session_id].get("parent_session_id")
+        if parent not in by_id:
+            return 0
+        return 1 + depth(parent, seen)
+
+    folded = set()
+    # Fold nested children first, so a parent rollout carries its own child
+    # entry when that parent is subsequently folded into the root session.
+    for child in sorted(candidates, key=lambda session: depth(session["id"]),
+                        reverse=True):
+        child_id = child["id"]
+        if child_id in folded:
+            continue
+        parent_id = child.get("parent_session_id")
+        if parent_id not in by_id or parent_id in folded:
+            continue
+        child_milestones = by_session.get(child_id, [])
+        if not child_milestones:
+            continue
+        start = min((m["ts"] for m in child_milestones if m.get("ts")),
+                    key=lambda ts: _ts_ms(ts) if _ts_ms(ts) is not None else float("inf"),
+                    default=child.get("last_ts"))
+        activity = _new_activity()
+        for child_milestone in child_milestones:
+            _merge_subagent_activity(activity, child_milestone["activity"])
+        if not any((activity["tools"], activity["files"], activity["assistant_turns"],
+                    activity["tokens_in"], activity["tokens_out"],
+                    activity["cache_read"], activity["cache_create"],
+                    activity["subagents"])):
+            continue
+        label = child.get("subagent_label")
+        text = f"triggered {label} subagent" if label else "triggered subagent"
+        attached = _new_milestone(
+            "subagent", text, start, parent_id)
+        attached["activity"] = activity
+        by_session.setdefault(parent_id, []).append(attached)
+        folded.add(child_id)
+
+    if not folded:
+        return
+
+    for sid, session_milestones in by_session.items():
+        session_milestones.sort(
+            key=lambda m: _ts_ms(m.get("ts"))
+            if _ts_ms(m.get("ts")) is not None else float("inf"))
+    sessions[:] = [session for session in sessions if session["id"] not in folded]
+    milestones[:] = [m for session in sessions
+                     for m in by_session.get(session["id"], [])]
+
+
 def build_codex_timelines(paths=None):
     """Parse rollouts (all, or just `paths`) -> list of ccx-shaped timeline dicts,
     one per distinct cwd, sessions in chronological (filename) order."""
@@ -471,6 +579,9 @@ def build_codex_timelines(paths=None):
         proj["milestones"].extend(ms)
         proj["branches"].update(branches)
         proj["diagnostics"].extend(diagnostics)
+
+    for proj in projects.values():
+        _associate_codex_subagents(proj["sessions"], proj["milestones"])
 
     return [_timeline_dict(CODEX_SESSIONS, cwd, proj["sessions"],
                            proj["milestones"], proj["branches"],

@@ -33,7 +33,8 @@ from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity,
                        build_timeline, find_project_dir,
                        merge_token_models, parse_iso)
 from codex_parse import (CODEX_SESSIONS, build_codex_timelines,
-                         build_history_only_timelines, iter_rollout_metas,
+                         build_history_only_timelines,
+                         _associate_codex_subagents, iter_rollout_metas,
                          rollout_paths)
 import pricing
 
@@ -454,12 +455,12 @@ def _timeline_repository(tl):
 
 
 def _group_codex_timelines(timelines):
-    """Group exec-only working directories under their interactive checkout.
+    """Group automated working directories under their interactive checkout.
 
-    When an exec-only timeline uses a different working directory from the
+    When an automated timeline uses a different working directory from the
     interactive checkout, grouping by cwd alone can split one repository across
     project cards. A repository's canonical path comes from an interactive
-    timeline; exec-only timelines with the same recorded remote are assigned to it.
+    timeline; automated timelines with the same recorded remote are assigned to it.
     """
     canonical = {}
     for tl in timelines:
@@ -479,7 +480,7 @@ def _group_codex_timelines(timelines):
     for tl in timelines:
         path = tl["project_path"].rstrip("/")
         repository = _timeline_repository(tl)
-        if (tl["sessions"] and all(_is_codex_exec(s) for s in tl["sessions"])
+        if (tl["sessions"] and all(_is_automated_codex(s) for s in tl["sessions"])
                 and repository in canonical):
             path = canonical[repository][1]
         grouped.setdefault(path, []).append(tl)
@@ -682,6 +683,7 @@ html.show-automated .etick[data-automated],html.show-automated .sdot[data-automa
 .emark::after{content:"";position:absolute;left:9px;top:7px;width:7px;height:7px;
   background:var(--sc,var(--human));transition:transform .12s,box-shadow .12s}
 .entry.session .emark::after{background:var(--bg);border:1px solid var(--faint)}
+.entry.subagent .emark::after{background:var(--machine);border-radius:2px}
 .emark:hover::after{transform:scale(1.5)}
 .emark:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .entry.current .emark::after{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc,var(--human)) 40%,transparent)}
@@ -697,6 +699,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .ask .cmdname{font-family:var(--mono);font-size:13px;color:var(--human);
   padding-right:4px}
 .ask-open{font-size:12px;color:var(--faint)}
+.entry.subagent .ask{font-family:var(--mono);font-size:12px;color:var(--machine)}
 .recovered-note{margin-top:7px;font-size:10.5px;color:var(--faint)}
 .entry.recovered .emark::after{background:var(--bg);border:2px solid var(--human);
   border-radius:50%}
@@ -776,6 +779,7 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
   .entry.session .clock::before{background:var(--bg);border:1px solid var(--faint)}
+  .entry.subagent .clock::before{background:var(--machine);border-radius:2px}
   .entry.current .clock::before{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc,var(--human)) 40%,transparent)}
 }
 /* on the narrowest phones (<=360px) the crumb + stepper stop fitting on one line
@@ -1637,7 +1641,10 @@ def _merge_timelines(tls):
     """Merge timelines for the same project into one: sessions in chronological
     order, each session's milestone chunk kept together, stats recomputed."""
     if len(tls) == 1:
-        return tls[0]
+        tl = tls[0]
+        _associate_codex_subagents(tl["sessions"], tl["milestones"])
+        tl["stats"] = _aggregate(tl["milestones"], tl["sessions"])
+        return tl
     chunks = []
     branches = Counter()
     diagnostics = []
@@ -1663,6 +1670,7 @@ def _merge_timelines(tls):
     chunks = sorted(best.values(), key=lambda c: c[0])
     sessions = [c[1] for c in chunks]
     milestones = [m for c in chunks for m in c[2]]
+    _associate_codex_subagents(sessions, milestones)
     return {**tls[0],
             "git_branches": dict(branches.most_common()),
             "sessions": sessions, "milestones": milestones,

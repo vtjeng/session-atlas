@@ -255,9 +255,11 @@ source for an individual prompt. See
 [Transcript formats](docs/transcript-formats.md) for source paths, record
 fields, and parser mappings.
 
-Session totals count non-automated conversations. Codex child-agent and
-`codex exec` rollouts remain in the page and project activity totals, and their
-count is available separately as `automated_sessions`.
+Session totals count non-automated conversations. Codex child-agent rollouts
+with a known parent are shown as timestamped activity entries inside that
+parent session, like nested Claude Code work. Orphaned child rollouts and
+`codex exec` remain separate automated sections; their count is available as
+`automated_sessions`.
 
 ### Timeline behavior
 
@@ -266,7 +268,9 @@ count is available separately as `automated_sessions`.
 Project pages group retained top-level Claude Code sessions and Codex CLI
 rollouts into separate sections. Nested Claude Code child transcripts add their
 token totals to the entry that started them instead of creating another
-section.
+section. Codex child rollouts with a known parent use the same presentation:
+their work is retained in a timestamped `triggered <agent> subagent` entry in
+the parent session.
 
 Entries use anchors such as `#s02-04`, where `02` is the session number and
 `04` is the entry number within that session. Session headings use anchors such
@@ -296,11 +300,13 @@ Automated rollouts are transcript-level work units for delegated Codex subagents
 or non-interactive `codex exec` tasks, not additional human conversations.
 Codex CLI sessions from temporary `codex exec` working directories are grouped
 under the interactive checkout when their Git remotes match. Project pages hide
-`codex exec` and child-agent sessions by default. The `Show automated Codex work`
-control displays the hidden rollout count and adds `?show-automated=1` to the URL
-when enabled. It shows or hides those timeline sections and their ribbon/minimap
-marks. The project summary's session card counts non-automated conversations,
-while the timeline range and navigation count the sections currently shown.
+`codex exec` and orphaned child-agent sessions by default. Child-agent work with
+a known parent is placed in that parent's timeline instead of becoming a
+separate section. The `Show automated Codex work` control displays the remaining
+hidden rollout count and adds `?show-automated=1` to the URL when enabled. It
+shows or hides those timeline sections and their ribbon/minimap marks. The
+project summary's session card counts non-automated conversations, while the
+timeline range and navigation count the sections currently shown.
 Prompts, commands, recovered prompts, activity statistics, token totals, and
 estimated cost continue to include hidden automated sessions.
 

@@ -126,7 +126,12 @@ class CodexTokenParsingTests(unittest.TestCase):
                 "type": "user_message", "message": "human prompt"}),
             _record("2026-07-20T00:01:00.000Z", "session_meta", {
                 "id": "child", "cwd": "/repo", "timestamp": "2026-07-20T00:01:00.000Z",
-                "thread_source": "subagent"}),
+                "thread_source": "subagent",
+                "source": {"subagent": {"thread_spawn": {
+                    "agent_path": None,
+                    "parent_thread_id": "root"}}},
+                "agent_path": "/my/subagent/name",
+            }),
             _record("2026-07-20T00:01:01.000Z", "response_item", {
                 "type": "function_call", "name": "exec_command",
                 # One tool call keeps the child rollout substantive.
@@ -144,9 +149,20 @@ class CodexTokenParsingTests(unittest.TestCase):
                 paths.append(path)
             timeline = build_codex_timelines(paths)[0]
 
-        # One root conversation remains after the child rollout is separated.
+        # The child rollout is attached to its parent instead of becoming a session.
         self.assertEqual(timeline["stats"]["sessions"], 1)
-        self.assertEqual(timeline["stats"]["automated_sessions"], 1)
+        self.assertEqual(timeline["stats"]["automated_sessions"], 0)
+        self.assertEqual(len(timeline["sessions"]), 1)
+        self.assertEqual([m["kind"] for m in timeline["milestones"]],
+                         ["prompt", "subagent"])
+        self.assertEqual(
+            timeline["milestones"][1]["text"],
+            "triggered /my/subagent/name subagent")
+        self.assertEqual(
+            timeline["milestones"][1]["activity"]["tools"], {"Shell": 1})
+        page = render(timeline)
+        self.assertIn("triggered /my/subagent/name subagent", page)
+        self.assertNotIn('<section class="session-block" data-automated>', page)
 
     def test_exec_workdirs_group_under_project_and_automated_sessions_can_hide(self):
         # One synthetic remote links the interactive checkout and temporary clone.
@@ -176,7 +192,7 @@ class CodexTokenParsingTests(unittest.TestCase):
         project_path = "/home/user/example-project"
         tui_timeline = timeline("tui", project_path, "codex-tui")
         subagent_timeline = timeline(
-            "subagent", project_path, "codex-tui", is_subagent=True,
+            "subagent", "/tmp/example-project-child", "codex-tui", is_subagent=True,
             label="/root/reviewer")
         # A different cwd verifies regrouping by remote rather than by path.
         exec_timeline = timeline("exec", "/tmp/example-project-audit", "codex_exec")
@@ -184,28 +200,29 @@ class CodexTokenParsingTests(unittest.TestCase):
         grouped = _group_codex_timelines(
             [tui_timeline, subagent_timeline, exec_timeline])
         self.assertEqual(list(grouped), [project_path])
-        page = render(_merge_timelines(grouped[project_path]))
+        merged = _merge_timelines(grouped[project_path])
+        page = render(merged)
 
         self.assertIn('Show automated Codex work', page)
         self.assertIn(
-            '(2 automated rollouts hidden &middot; included in totals)', page)
-        self.assertIn('data-automated-count="2"', page)
+            '(1 automated rollout hidden &middot; included in totals)', page)
+        self.assertIn('data-automated-count="1"', page)
         self.assertIn(
             'title="Delegated Codex subagent and non-interactive codex exec work.',
             page)
         self.assertNotIn('Hide automated Codex sessions', page)
-        self.assertEqual(page.count('<section class="session-block" data-automated>'), 2)
+        self.assertEqual(page.count('<section class="session-block" data-automated>'), 1)
         self.assertIn('>codex exec</span>', page)
-        self.assertIn('>subagent</span>', page)
+        self.assertIn('triggered /root/reviewer subagent', page)
+        self.assertEqual(merged["stats"]["sessions"], 1)
+        self.assertEqual(merged["stats"]["automated_sessions"], 1)
+        subagent_entry = next(m for m in merged["milestones"]
+                              if m["kind"] == "subagent")
+        self.assertEqual(subagent_entry["activity"]["tokens_in"], 1_000_000)
         # The badges should explain why these sections are not conversations.
-        self.assertIn(
-            'title="Delegated Codex subagent work; not a separate human conversation"',
-            page)
         self.assertIn(
             'title="Non-interactive Codex task; not a separate human conversation"',
             page)
-        self.assertIn('<div class="stitle">/root/reviewer</div>', page)
-        self.assertIn('spawned by session 01</a>', page)
         self.assertIn("const automatedQuery='show-automated'", page)
         self.assertIn('automatedToggle.checked=showAutomated', page)
         self.assertIn("url.searchParams.set(automatedQuery,'1')", page)

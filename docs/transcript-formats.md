@@ -12,7 +12,7 @@ merges them per repository path.
 ```
 timeline = {project_dir, project_name, project_path, git_branches,
             sessions:  [{id, last_ts, title, tool: "claude"|"codex", ...}],
-            milestones:[{kind: "prompt"|"command"|"recovered"|"session", text, ts,
+            milestones:[{kind: "prompt"|"command"|"recovered"|"session"|"subagent", text, ts,
                          session: <session id>, activity}],
             diagnostics: [<skipped-record warning>],
             stats: ccx_parse._aggregate(milestones, sessions)}
@@ -25,15 +25,19 @@ Both session types contain `id`, `last_ts`, `title`, and `tool`. Codex sessions
 also contain `originator`, `repository_url`, `is_subagent`, `subagent_label`,
 `parent_session_id`, `parent_relation`, and optional `is_history_only`.
 The aggregate `stats.sessions` value counts non-automated conversations;
-`stats.automated_sessions` counts Codex child-agent and `codex exec` rollouts.
-Automated activity remains included in the other aggregate totals.
-Automated rollouts are separate transcript files for delegated work, not
-additional human conversations.
+`stats.automated_sessions` counts standalone Codex child-agent and `codex exec`
+rollouts. When a child-agent rollout identifies a parent present in the parsed
+project, its work is moved into a timestamped `subagent` milestone in that
+parent session, so it does not add another session. Orphaned child rollouts
+remain standalone. Automated activity remains included in the other aggregate
+totals. Automated rollouts are separate transcript files for delegated work,
+not additional human conversations.
 
 A milestone is an attribution interval. `prompt`, `command`, and `recovered`
 intervals start at retained inputs; `session` intervals collect substantive
-machine activity before the first retained input or at a child-task boundary.
-Each interval owns activity until the next boundary, and empty `session`
+machine activity before the first retained input or at a child-task boundary;
+`subagent` intervals mark delegated Codex work at the child rollout's start
+time. Each interval owns activity until the next boundary, and empty `session`
 intervals are discarded.
 
 ## Claude Code (`~/.claude/projects/<munged-cwd>/<session-uuid>.jsonl`)
