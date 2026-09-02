@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Session Atlas</title>
+  <rect width="64" height="64" rx="13" fill="#15171b"/>
+  <path d="M 16.9 21.9 C 18.2 17.8 23 15.4 27.9 15.4 C 33.7 15.4 37.5 19.7 37.5 25.5 L 37.5 42.7 C 37.5 46.5 33.9 48.7 27.9 48.7 C 20.7 48.7 16.1 45 16.1 39.5 C 16.1 33.7 20.5 30.3 27.1 30.3 C 32.9 30.3 36.5 32.7 37.5 36 L 37.5 44.1 C 37.8 47.5 40.4 48.7 43.1 48.7 C 45.2 48.7 46.2 46.9 46.9 44.7 L 48.3 40.3"
+        fill="none" stroke="#e9e6df" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="-3.3" y="-3.3" width="6.6" height="6.6" rx="1.6" fill="#e3b25c"
+        transform="translate(16.9 21.9) rotate(-59.6)"/>
+  <path d="M 0 0 L -7 3.15 L -7 -3.15 Z" fill="#468cc6" stroke="#468cc6" stroke-width="1.3"
+        stroke-linejoin="round" transform="translate(49.56 36.52) rotate(-72.0)"/>
+</svg>

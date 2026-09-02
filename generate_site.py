@@ -27,6 +27,7 @@ import unicodedata
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity,
                        _is_transcript_dir, _iter_subagent_transcripts,
@@ -53,6 +54,14 @@ _MAX_PROJECT_SLUG = 80
 # The minimap adds one positioned DOM node and one geometry read per entry.
 # Large pages omit it so the navigation aid does not compete with the log.
 MINIMAP_MAX_ENTRIES = 1000
+
+
+@functools.lru_cache(maxsize=1)
+def favicon_link():
+    """Return the standalone-page favicon as an embedded SVG data URL."""
+    svg = Path(__file__).with_name("favicon.svg").read_text(encoding="utf-8")
+    return (f'<link rel="icon" type="image/svg+xml" '
+            f'href="data:image/svg+xml,{quote(svg, safe="")}">')
 
 # ------------------------------------------------------------------ helpers -- #
 def esc(s):
@@ -1503,6 +1512,7 @@ def render(tl, home=None, refreshed_at=None):
 
     return PAGE.format(
         generator_meta=GENERATOR_META,
+        favicon=favicon_link(),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS,
@@ -1561,7 +1571,7 @@ a.proj:hover,a.proj:focus-visible{border-color:var(--machine);outline:none}
 INDEX_PAGE = """<!doctype html><html lang="en"><head>
 {generator_meta}
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 8 H3 L4 4 L5 12 L6 8 H8.2' fill='none' stroke='%233f92c4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/><path d='M8.2 8 L9.2 3 L10.2 13 L11 8 H15' fill='none' stroke='%23cf9a3c' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+{favicon}
 <title>Project logs</title>
 <style>{css}</style></head><body>
 <div class="wrap">
@@ -1659,6 +1669,7 @@ def render_index(entries, refreshed_at=None, source_label=None):
     label = _eyebrow(all_tools)
     return INDEX_PAGE.format(
         generator_meta=GENERATOR_META,
+        favicon=favicon_link(),
         provenance=PAGE_PROVENANCE,
         css=CSS + INDEX_CSS,
         eyebrow=esc(label),
@@ -1679,7 +1690,7 @@ def render_index(entries, refreshed_at=None, source_label=None):
 PAGE = """<!doctype html><html lang="en"><head>
 {generator_meta}
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 8 H3 L4 4 L5 12 L6 8 H8.2' fill='none' stroke='%233f92c4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/><path d='M8.2 8 L9.2 3 L10.2 13 L11 8 H15' fill='none' stroke='%23cf9a3c' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+{favicon}
 <title>{title} · project log</title>
 <style>{css}</style></head><body class="{body_class}">
 {minimap}

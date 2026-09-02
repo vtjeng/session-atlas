@@ -164,6 +164,10 @@ class TranscriptFixtureTests(unittest.TestCase):
         page = render(timeline)
         self.assertIn("response excerpts", page)
         self.assertIn("The bounded cache now invalidates after writes", page)
+        # Generated pages embed the SVG so each output file remains standalone.
+        self.assertIn(
+            '<link rel="icon" type="image/svg+xml" '
+            'href="data:image/svg+xml,%3Csvg', page)
 
     def test_codex_fixture_statistics(self):
         # The single Codex rollout contributes one prompt, two tool calls, and
