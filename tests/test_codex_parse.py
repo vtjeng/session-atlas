@@ -639,7 +639,7 @@ class CodexTokenParsingTests(unittest.TestCase):
         page = render(timeline)
 
         self.assertNotIn('<aside class="minimap"', page)
-        self.assertNotIn('<body class="has-minimap">', page)
+        self.assertIn('<body class="has-right-rail">', page)
 
 
 if __name__ == "__main__":

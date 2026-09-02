@@ -289,7 +289,8 @@ return to the top, and click the session title to jump to that session. Click
 the top ribbon to jump to the nearest timeline entry on its chronological axis.
 On wide screens, click or drag the right-hand minimap to scroll through the
 page. Very large pages (more than 1,000 timeline entries) omit the minimap so
-its navigation nodes do not add to the page's loading work.
+its navigation nodes do not add to the page's loading work, but retain the
+right-hand gutter so switching between project pages does not shift the layout.
 
 #### Charts and timestamps
 
@@ -374,6 +375,18 @@ npm run screenshots
 supported image-refresh entry point. It builds and captures only the synthetic
 fixture site described in [Privacy](#privacy).
 
+To profile a generated page before and after a rendering change, use the
+committed headless-browser profiler. Pass the same page path and sample count
+to both revisions:
+
+```bash
+npm run profile:page -- site/<project-slug>/index.html --repeats 2
+```
+
+It reports navigation timing, DOM and content counts, browser node and heap
+usage, script/style/layout time, and the sizes of response and tool-log markup.
+Run the unchanged page twice first to establish the browser's noise floor.
+
 The main files have these roles:
 
 | Path | Purpose |
@@ -384,6 +397,7 @@ The main files have these roles:
 | `archive_transcripts.py` | Implements transcript archiving and its retention policy. |
 | `pricing.py` | Applies the model rates in `estimate_cost()`. |
 | `scripts/capture-readme-screenshots.sh` | Runs the supported synthetic-fixture screenshot workflow. |
+| `scripts/profile-page.js` | Profiles a generated page's browser load and DOM costs. |
 | `tests/fixtures/transcripts/` | Holds invented Claude Code and Codex CLI records for parser and screenshot tests. |
 | `docs/transcript-formats.md` | Documents transcript fields and parser mappings for future parser changes. |
 

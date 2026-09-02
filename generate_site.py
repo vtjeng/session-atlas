@@ -598,8 +598,8 @@ button{font:inherit;color:inherit}
   background:color-mix(in srgb,var(--ink) 12%,transparent);
   border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
 body{padding-right:0}
-body.has-minimap{padding-right:56px}
-@media (max-width:759px){.minimap{display:none}body.has-minimap{padding-right:0}}
+body.has-right-rail{padding-right:56px}
+@media (max-width:759px){.minimap{display:none}body.has-right-rail{padding-right:0}}
 .sessnav{display:flex;align-items:center;gap:8px;flex:0 0 auto;
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
@@ -1242,11 +1242,10 @@ def render(tl, home=None, refreshed_at=None):
     topbar = (f'<div class="topbar"><div class="wrap">'
               f'<div class="tbtop">{crumb}{stepper}</div>{ribbon}</div></div>')
     minimap = ""
-    body_class = ""
+    body_class = "has-right-rail"
     if len(ms) <= MINIMAP_MAX_ENTRIES:
         minimap = ('<aside class="minimap" id="minimap" aria-label="timeline minimap">'
                    '<div class="mm-track" id="mmtrack"></div></aside>')
-        body_class = "has-minimap"
 
     # ---- log entries
     nodes = []

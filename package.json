@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "screenshots:install": "playwright install chromium",
-    "screenshots": "scripts/capture-readme-screenshots.sh"
+    "screenshots": "scripts/capture-readme-screenshots.sh",
+    "profile:page": "node scripts/profile-page.js"
   },
   "devDependencies": {
     "playwright": "1.62.1"
