@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
   <title id="title">Session Atlas</title>
   <rect width="64" height="64" rx="13" fill="#15171b"/>
-  <path d="M 16.8 23.6 C 18.1 19.5 21.9 15.5 26.9 15.5 C 32.6 15.5 36.2 19.8 36.2 25.6 L 36.2 41.4 C 36.2 44.7 32.2 46.9 26.9 46.9 C 20 46.9 15.7 43.3 15.7 38.1 C 15.7 33.1 19.9 30.2 26.1 30.2 C 31.7 30.2 35.2 32.4 36.2 35.7 L 36.2 42.8 C 36.5 46.6 39.7 48.6 42.7 48.6 C 44.8 48.6 46 46.8 46.8 44.4 L 48.2 40"
+  <path d="M 16.2 21.9 C 17.5 17.8 22.3 15.4 27.2 15.4 C 33 15.4 36.8 19.7 36.8 25.5 L 36.8 42.7 C 36.8 46.5 33.2 48.7 27.2 48.7 C 20 48.7 15.4 45 15.4 39.5 C 15.4 33.7 19.8 30.3 26.4 30.3 C 32.2 30.3 35.8 32.7 36.8 36 L 36.8 44.1 C 37.1 47.5 40.3 48.7 43.3 48.7 C 45.4 48.7 46.6 46.9 47.4 44.5 L 48.8 40.1"
         fill="none" stroke="#e9e6df" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
   <rect x="-3.3" y="-3.3" width="6.6" height="6.6" rx="1.6" fill="#e3b25c"
-        transform="translate(16.8 23.6) rotate(-64.6)"/>
+        transform="translate(16.2 21.9) rotate(-59.6)"/>
   <path d="M 0 0 L -7.6 3.4 L -7.6 -3.4 Z" fill="#468cc6" stroke="#468cc6" stroke-width="1.3"
-        stroke-linejoin="round" transform="translate(49.6 35.8) rotate(-72)"/>
+        stroke-linejoin="round" transform="translate(50.2 35.9) rotate(-72)"/>
 </svg>
