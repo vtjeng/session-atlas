@@ -8,7 +8,8 @@ if (!siteDir) {
   throw new Error('SCREENSHOT_SITE_DIR must point to the synthetic fixture site');
 }
 
-const imageDir = path.resolve('docs', 'images');
+const imageDir = path.resolve(
+  process.env.SCREENSHOT_IMAGE_DIR || path.join('docs', 'images'));
 const siteUrl = relativePath => pathToFileURL(path.join(siteDir, relativePath)).href;
 const CAPTURE_PADDING = 24;
 

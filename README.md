@@ -382,6 +382,18 @@ npm run screenshots
 supported image-refresh entry point. It builds and captures only the synthetic
 fixture site described in [Privacy](#privacy).
 
+The visual regression check compares those generated images with the committed
+documentation images using Playwright. Run it after refreshing screenshots to
+verify that the generated pixels match the baselines:
+
+```bash
+npm run test:visual
+```
+
+An intentional visual change requires regenerating and reviewing the images
+before committing them. A failed visual check writes the actual, expected, and
+diff images under `test-results/` and the HTML report under `playwright-report/`.
+
 To profile a generated page before and after a rendering change, use the
 committed headless-browser profiler. Pass the same page path and sample count
 to both revisions:

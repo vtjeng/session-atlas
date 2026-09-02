@@ -4,6 +4,7 @@
   "scripts": {
     "screenshots:install": "playwright install chromium",
     "screenshots": "scripts/capture-readme-screenshots.sh",
+    "test:visual": "playwright test",
     "profile:page": "node scripts/profile-page.js"
   },
   "devDependencies": {
