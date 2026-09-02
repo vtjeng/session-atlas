@@ -8,8 +8,9 @@ import unittest
 from ccx_parse import _has_substantive_activity, _new_activity, _timeline_dict
 from codex_parse import (_parse_rollout, build_codex_timelines,
                          build_history_only_timelines)
-from generate_site import (RECOVERED_PROMPT_EXPLANATION, _group_codex_timelines,
-                           _merge_timelines, render, render_index)
+from generate_site import (MINIMAP_MAX_ENTRIES, RECOVERED_PROMPT_EXPLANATION,
+                           _group_codex_timelines, _merge_timelines, render,
+                           render_index)
 
 
 def _record(ts, record_type, payload):
@@ -614,6 +615,31 @@ class CodexTokenParsingTests(unittest.TestCase):
             stats["tokens_by_model"]["gpt-5.5"],
             {"in": 40, "out": 15, "cr": 110, "cc": 0, "cc1h": 0},
         )
+
+    def test_large_timeline_omits_minimap(self):
+        session = {
+            "id": "root",
+            "last_ts": "2026-07-20T00:00:01.000Z",
+            "title": "large timeline",
+            "tool": "codex",
+        }
+        milestones = [
+            {
+                "kind": "prompt",
+                "text": f"prompt {i}",
+                "ts": "2026-07-20T00:00:00.000Z",
+                "session": "root",
+                "activity": _new_activity(),
+            }
+            for i in range(MINIMAP_MAX_ENTRIES + 1)
+        ]
+        timeline = _timeline_dict(
+            "/tmp/codex", "/repo", [session], milestones, Counter())
+
+        page = render(timeline)
+
+        self.assertNotIn('<aside class="minimap"', page)
+        self.assertNotIn('<body class="has-minimap">', page)
 
 
 if __name__ == "__main__":

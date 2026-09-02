@@ -50,6 +50,9 @@ RECOVERED_PROMPT_EXPLANATION = (
 )
 _SAFE_PROJECT_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_PROJECT_SLUG = 80
+# The minimap adds one positioned DOM node and one geometry read per entry.
+# Large pages omit it so the navigation aid does not compete with the log.
+MINIMAP_MAX_ENTRIES = 1000
 
 # ------------------------------------------------------------------ helpers -- #
 def esc(s):
@@ -594,8 +597,9 @@ button{font:inherit;color:inherit}
 .mm-view{position:absolute;left:0;right:0;min-height:6px;
   background:color-mix(in srgb,var(--ink) 12%,transparent);
   border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
-body{padding-right:56px}
-@media (max-width:759px){.minimap{display:none}body{padding-right:0}}
+body{padding-right:0}
+body.has-minimap{padding-right:56px}
+@media (max-width:759px){.minimap{display:none}body.has-minimap{padding-right:0}}
 .sessnav{display:flex;align-items:center;gap:8px;flex:0 0 auto;
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
@@ -820,7 +824,7 @@ const crumbDesc=document.getElementById('crumbDesc'); // sticky subtitle, tracks
 const crumbName=document.getElementById('crumbName'); // project name in the crumb (-> back to top)
 let mmView=null, curSel=null;
 function buildMap(){
-  if(!track) return;
+  if(!track || !matchMedia('(min-width:760px)').matches) return;
   const H=docH();
   const root=getComputedStyle(document.documentElement);
   const col=['--s1','--s2','--s3','--s4','--s5','--s6','--s7','--s8'].map(v=>root.getPropertyValue(v).trim());
@@ -1237,8 +1241,12 @@ def render(tl, home=None, refreshed_at=None):
 
     topbar = (f'<div class="topbar"><div class="wrap">'
               f'<div class="tbtop">{crumb}{stepper}</div>{ribbon}</div></div>')
-    minimap = ('<aside class="minimap" id="minimap" aria-label="timeline minimap">'
-               '<div class="mm-track" id="mmtrack"></div></aside>')
+    minimap = ""
+    body_class = ""
+    if len(ms) <= MINIMAP_MAX_ENTRIES:
+        minimap = ('<aside class="minimap" id="minimap" aria-label="timeline minimap">'
+                   '<div class="mm-track" id="mmtrack"></div></aside>')
+        body_class = "has-minimap"
 
     # ---- log entries
     nodes = []
@@ -1442,6 +1450,7 @@ def render(tl, home=None, refreshed_at=None):
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS,
+        body_class=body_class,
         eyebrow=esc(_eyebrow(_session_tools(tl["sessions"]))),
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
@@ -1618,7 +1627,7 @@ PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1 8 H3 L4 4 L5 12 L6 8 H8.2' fill='none' stroke='%233f92c4' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/><path d='M8.2 8 L9.2 3 L10.2 13 L11 8 H15' fill='none' stroke='%23cf9a3c' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>">
 <title>{title} · project log</title>
-<style>{css}</style></head><body>
+<style>{css}</style></head><body class="{body_class}">
 {minimap}
 {topbar}
 <div class="wrap">

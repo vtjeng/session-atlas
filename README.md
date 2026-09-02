@@ -288,7 +288,8 @@ buttons, or `j` and `k`, to move between sessions. Click the project name to
 return to the top, and click the session title to jump to that session. Click
 the top ribbon to jump to the nearest timeline entry on its chronological axis.
 On wide screens, click or drag the right-hand minimap to scroll through the
-page.
+page. Very large pages (more than 1,000 timeline entries) omit the minimap so
+its navigation nodes do not add to the page's loading work.
 
 #### Charts and timestamps
 
