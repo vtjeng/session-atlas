@@ -670,6 +670,8 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .chip.model{color:var(--machine)}
 .chip.model.fam-claude{color:var(--claude)}
 .chip.model.fam-gpt{color:var(--codex)}
+.chip.model .model-turns{color:inherit}
+.chip .tool-count{color:var(--machine)}
 .tooltag{display:inline-block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
   padding:1px 6px;border:1px solid var(--line);border-radius:4px;color:var(--dim)}
 .tooltag.t-claude{color:var(--claude);border-color:var(--claude)}
@@ -746,6 +748,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .rotools{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 14px}
 .rotools .tools-label{color:var(--faint);letter-spacing:.04em}
 .rotools .tn{color:var(--machine)}
+.rotools .tool-count{color:var(--machine)}
 details.more{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px}
 details.more>summary{cursor:pointer;font-size:10.5px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--faint);list-style:none;user-select:none}
@@ -1191,10 +1194,11 @@ def render(tl, home=None, refreshed_at=None):
         chips.append(
             f'<span class="{cls}" '
             f'title="Assistant turns attributed to this model; not sessions">'
-            f'{esc(clean_model(m))} <b>{model_turns}</b> '
+            f'{esc(clean_model(m))} <b class="model-turns">&times;{model_turns}</b> '
             f'turn{_s(model_turns)}</span>')
     for k, v in list(s["tools"].items())[:6]:
-        chips.append(f'<span class="chip"><b>{v}</b> {esc(k)}</span>')
+        chips.append(f'<span class="chip">{esc(k)} '
+                     f'<b class="tool-count">&times;{v}</b></span>')
     diagnostic_count = len(tl.get("diagnostics") or [])
     if diagnostic_count:
         chips.append(
@@ -1430,7 +1434,8 @@ def render(tl, home=None, refreshed_at=None):
             if tools:
                 tool_bits.append('<span class="tools-label">tools used:</span>')
                 tool_bits.extend(
-                    f'<span><span class="tn">{esc(k)}</span> &times;{v}</span>'
+                    f'<span><span class="tn">{esc(k)}</span> '
+                    f'<span class="tool-count">&times;{v}</span></span>'
                     for k, v in tools[:5])
                 if len(tools) > 5:
                     tool_bits.append(f'<span>+{len(tools) - 5} more</span>')
