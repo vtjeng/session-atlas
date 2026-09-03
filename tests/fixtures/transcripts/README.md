@@ -13,7 +13,7 @@ The fixed values exercise these parser paths:
   includes both a mixed-source project and a single-source project.
 - March 12–15 timestamps keep the documentation images within one compact four-day range.
 - Supported model identifiers and invented agentic-session token counts produce
-  a visible multi-dollar cost estimate without reproducing local usage totals.
+  a visible multi-dollar API cost estimate without reproducing local usage totals.
 - `main`, `https://example.com/`, and repeated UUID digits are recognizable
   synthetic metadata rather than copies of local branches, remotes, or session
   identifiers.

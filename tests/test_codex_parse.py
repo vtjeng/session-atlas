@@ -439,7 +439,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             '<div class="l lbl">session</div>',
             '<div class="l lbl">inputs</div>',
             '<div class="l lbl">day active</div>',
-            '<div class="l lbl">est. cost</div>',
+            '<div class="l lbl">est. API cost</div>',
         ]
         for summary in (page, index):
             positions = [summary.find(label) for label in shared_labels]
