@@ -273,10 +273,9 @@ def cost_display(by_model):
     """Primary estimate text/label/title, visibly partial if any model is unpriced."""
     _, total, unpriced = pricing.cost_breakdown(by_model or {})
     shown = fmt_cost(total)
-    label = "est. cost"
+    label = "est. API cost"
     if unpriced:
         shown += "+"
-        label = "partial est. cost"
     title = cost_breakdown_title(by_model or {})
     return total, shown, label, title
 
@@ -325,7 +324,7 @@ def _model_table(models, overall, cell, fmt, heading, multi):
 
 def _breakdown_table(by_model, scope):
     """Where this page's estimate goes: a cost matrix (model x token type) and a
-    matching token-count matrix, so any figure is traceable to model and token."""
+    matching token-count matrix, so any API-cost figure is traceable to model and token."""
     by_model = by_model or {}
     overall, total, unpriced = pricing.cost_breakdown(by_model)
     if not total and not unpriced:
@@ -339,7 +338,7 @@ def _breakdown_table(by_model, scope):
     models = [(mid, cats) for _, mid, cats in priced]
     multi = len(models) > 1
     cost_table = (_model_table(models, overall, lambda c, k: c[k]["cost"], fmt_cost,
-                               f'Cost by model &mdash; {esc(scope)}:', multi)
+                               f'API cost by model &mdash; {esc(scope)}:', multi)
                   if models else "")
 
     token_models = []
@@ -374,13 +373,13 @@ def cost_method_html(by_model, scope):
     excl = ""
     if unpriced:
         excl = (f'<p class="excl">Excluded (no rate): {esc(", ".join(unpriced))}. '
-                f'Add them to <code>pricing.py</code> to include their cost.</p>')
+                f'Add them to <code>pricing.py</code> to include their API cost.</p>')
     category_help = "".join(
         f'<p><b>{esc(label)}:</b> {esc(help_text)}</p>'
         for _, label, help_text in pricing.CATEGORY_SPECS
     )
     return (
-        '<details class="pricing"><summary>How is est. cost estimated?</summary>'
+        '<details class="pricing"><summary>How is est. API cost estimated?</summary>'
         '<div class="pricing-body">'
         "<p>Each model's tokens are multiplied by its list rate and summed. Tokens "
         "are attributed to the model that produced them, so a project that mixes "
@@ -397,7 +396,7 @@ def cost_method_html(by_model, scope):
 
 
 def cost_breakdown_title(by_model):
-    """Tooltip text: per-model cost split behind an est. cost figure."""
+    """Tooltip text: per-model API-cost split behind an est. API cost figure."""
     parts = []
     for mid, tk in by_model.items():
         c = pricing.estimate_cost({mid: tk})
@@ -1418,7 +1417,7 @@ def render(tl, home=None, refreshed_at=None):
                 bit = f'spawned <b>{len(subs)}</b> subagent{"s" if len(subs) != 1 else ""}'
                 if scost and icost:  # share of THIS milestone's cost, not a second total
                     pct = scost / icost * 100
-                    bit += f' · <b>{"&lt;1%" if pct < 1 else f"{round(pct)}%"}</b> of cost'
+                    bit += f' · <b>{"&lt;1%" if pct < 1 else f"{round(pct)}%"}</b> of API cost'
                 stat_bits.append(f'<span class="sub">{bit}</span>')
 
             tools = sorted(a["tools"].items(), key=lambda kv: -kv[1])

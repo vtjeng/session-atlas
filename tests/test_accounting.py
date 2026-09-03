@@ -213,7 +213,7 @@ class AccountingTests(unittest.TestCase):
         }
         _, shown, label, title = cost_display(by_model)
         self.assertEqual(shown, "$5+")
-        self.assertEqual(label, "partial est. cost")
+        self.assertEqual(label, "est. API cost")
         self.assertIn("unpriced: codex-auto-review", title)
         table = _breakdown_table(by_model, "test")
         self.assertIn("codex-auto-review", table)

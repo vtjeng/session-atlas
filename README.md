@@ -9,7 +9,7 @@ The project index summarizes activity across projects.
 
 Each project page shows prompts and the assistant activity that followed them,
 including tool use, changed files, token usage, [recorded or estimated active
-time](#usage-and-cost-accounting), and estimated cost.
+time](#usage-and-api-cost-accounting), and estimated API cost.
 
 The model chips on a project page show assistant-turn counts attributed to each
 model; those numbers are not session counts. Branch names remain parser metadata
@@ -95,14 +95,14 @@ read an existing `site/` or transcripts from a developer's home directory.
 ## What the atlas shows
 
 These representative images show the project index, a project overview,
-expanded cost details, and session content.
+expanded API cost details, and session content.
 
 ### Project index summary
 
 The top of the project index summarizes activity across every project and links
-to the method and token counts behind its cost estimate.
+to the method and token counts behind its API cost estimate.
 
-![Project index summary including estimated cost](docs/images/project-log-summary.png)
+![Project index summary including estimated API cost](docs/images/project-log-summary.png)
 
 ### Project index cards
 
@@ -115,17 +115,17 @@ represented in each project.
 ### Project overview
 
 An individual project page summarizes its sessions, activity, models, tools,
-and estimated cost. An expandable panel explains the estimate and breaks it
+and estimated API cost. An expandable panel explains the estimate and breaks it
 down by model and token category.
 
 ![Individual project overview with activity statistics](docs/images/project-overview.png)
 
-### Expanded estimated cost
+### Expanded estimated API cost
 
-The expanded accounting control shows estimated cost by model and token
+The expanded accounting control shows estimated API cost by model and token
 category in one table.
 
-![Expanded estimated-cost control with one cost table](docs/images/expanded-cost.png)
+![Expanded estimated-API-cost control with one API-cost table](docs/images/expanded-cost.png)
 
 ### Session content
 
@@ -323,7 +323,7 @@ in the ribbon and minimap. The project summary's session card counts
 non-automated conversations, while the timeline and navigation show all retained
 sections.
 Prompts, commands, recovered prompts, activity statistics, token totals, and
-estimated cost continue to include hidden automated sessions.
+estimated API cost continue to include hidden automated sessions.
 
 #### Claude Code project paths
 
@@ -342,7 +342,7 @@ with matching basenames cannot overwrite one another. The generator rejects
 unsafe slugs and existing project-directory symlinks instead of writing outside
 `--out`.
 
-### Usage and cost accounting
+### Usage and API cost accounting
 
 Claude Code token totals come from assistant `usage` fields, and duration totals
 come from system `turn_duration` records. Codex CLI token totals come from
@@ -350,15 +350,15 @@ changes in cumulative `token_count` records. Because Codex does not record turn
 durations, the parser estimates active time from each input timestamp through
 the last activity record before the next input.
 
-Cost is an estimate based on the per-model list rates in `pricing.py`. The
+API cost is an estimate based on the per-model list rates in `pricing.py`. The
 expandable accounting panel explains each token category and shows the rates
 used. `pricing.py` owns the exact rates and their `AS_OF` date. The estimate
 excludes batch, priority, long-context, volume, and enterprise pricing.
 
 A dollar figure ending in `+` is partial because at least one model has no
 listed rate. The accounting panel shows each unpriced model and its token count;
-add the missing model to `pricing.py` to include its cost. The page labels a
-complete figure `est. cost` and a partial figure `partial est. cost`.
+add the missing model to `pricing.py` to include its API cost. The page labels
+the figure `est. API cost`; a trailing `+` marks an incomplete estimate.
 
 ## Development
 
