@@ -643,7 +643,7 @@ body.has-right-rail{padding-right:56px}
 .sessnav[hidden]{display:none}
 
 /* ---- hero ---- */
-header.hero{padding:46px 0 30px;border-bottom:1px solid var(--line)}
+header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
 h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em;
   margin:12px 0 6px}
 .path{font-size:11.5px;color:var(--faint);word-break:break-all}
