@@ -1195,8 +1195,8 @@ def render(tl, home=None, refreshed_at=None):
         chips.append(
             f'<span class="{cls}" '
             f'title="Assistant turns attributed to this model; not sessions">'
-            f'{esc(clean_model(m))} <b class="model-turns">&times;{model_turns}</b> '
-            f'turn{_s(model_turns)}</span>')
+            f'{esc(clean_model(m))} <span class="model-turns">'
+            f'<b>&times;{model_turns}</b> turn{_s(model_turns)}</span></span>')
     for k, v in list(s["tools"].items())[:6]:
         chips.append(f'<span class="chip"><span class="tool-name">{esc(k)}</span> '
                      f'<b class="tool-count">&times;{v}</b></span>')
