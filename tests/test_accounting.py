@@ -193,6 +193,8 @@ class AccountingTests(unittest.TestCase):
         card = generate_site.cost_method_html(
             {"claude-fable-5-1": tokens}, "test")
         self.assertIn('<td class="mdl fam-claude">fable-5-1</td>', card)
+        self.assertIn('Estimated cost by model (test):', card)
+        self.assertIn('<ul class="category-help"><li><b>input:</b>', card)
 
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)
@@ -203,6 +205,17 @@ class AccountingTests(unittest.TestCase):
             self.assertTrue(key)
             self.assertTrue(label)
             self.assertTrue(help_text)
+
+    def test_model_breakdowns_use_shared_family_capability_order(self):
+        model_ids = [
+            "gpt-5.6-sol", "claude-opus-5", "gpt-5.3-codex",
+            "claude-haiku-4-5", "claude-sonnet-5", "codex-auto-review",
+        ]
+        ordered = sorted(model_ids, key=generate_site._model_sort_key)
+        self.assertEqual(ordered, [
+            "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5",
+            "gpt-5.3-codex", "gpt-5.6-sol", "codex-auto-review",
+        ])
 
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {

@@ -6,7 +6,7 @@
     python3 generate_site.py --all                           # every project + index page
 
 The page shows each prompt and the activity that followed it, including tools,
-files, tokens, and active time. A top ribbon shows when sessions occurred, and a
+files, tokens, and agent active time. A top ribbon shows when sessions occurred, and a
 right-hand minimap tracks document position. The generator renders timestamps
 in the local timezone and writes each page as one dependency-free HTML file.
 """
@@ -305,6 +305,43 @@ def _model_td(mid):
     return f'<td{cls}>{esc(clean_model(mid))}</td>'
 
 
+_MODEL_DISPLAY_ORDER = (
+    # Keep the familiar families together, with capability tiers increasing.
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-5",
+    "claude-opus-4-6",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-fable-5-1",
+    "gpt-5.3-codex",
+    "gpt-5.4",
+    "gpt-5.5",
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.6-sol",
+    "gpt-5.6",
+)
+_MODEL_DISPLAY_RANK = {mid: rank for rank, mid in enumerate(_MODEL_DISPLAY_ORDER)}
+
+
+def _model_sort_key(mid):
+    """Sort known models by family and curated low-to-high capability tier."""
+    fam = model_family(mid)
+    family_rank = {"claude": 0, "gpt": 1}.get(fam, 2)
+    rank = _MODEL_DISPLAY_RANK.get(mid)
+    if rank is not None:
+        return family_rank, 0, rank, clean_model(mid).lower()
+    # Keep newly observed or unpriced models visible, but after known models in
+    # their family; their relative order remains predictable by model name.
+    return family_rank, 1, 0, clean_model(mid).lower()
+
+
+def _sort_model_rows(rows):
+    return sorted(rows, key=lambda row: _model_sort_key(row[0]))
+
+
 def _model_table(models, overall, cell, fmt, heading, multi):
     """A model x token-type matrix. ``cell(cats, k)`` pulls a cell's raw number;
     the last column is that row summed, and (when ``multi``) a total row sums the
@@ -334,11 +371,10 @@ def _breakdown_table(by_model, scope):
         cats, mt, _ = pricing.cost_breakdown({mid: tk})
         if mt:
             priced.append((mt, mid, cats))
-    priced.sort(key=lambda x: x[0], reverse=True)  # biggest cost first
-    models = [(mid, cats) for _, mid, cats in priced]
+    models = _sort_model_rows([(mid, cats) for _, mid, cats in priced])
     multi = len(models) > 1
     cost_table = (_model_table(models, overall, lambda c, k: c[k]["cost"], fmt_cost,
-                               f'API cost by model &mdash; {esc(scope)}:', multi)
+                               f'Estimated cost by model ({esc(scope)}):', multi)
                   if models else "")
 
     token_models = []
@@ -350,8 +386,7 @@ def _breakdown_table(by_model, scope):
             token_models.append((mid, cats))
             for k, _ in pricing.CATEGORIES:
                 token_overall[k]["tokens"] += cats[k]["tokens"]
-    token_models.sort(key=lambda item: sum(c["tokens"] for c in item[1].values()),
-                      reverse=True)
+    token_models = _sort_model_rows(token_models)
     token_table = _model_table(
         token_models, token_overall, lambda c, k: c[k]["tokens"], fmt_num,
         '&hellip; and the token counts behind it:', len(token_models) > 1)
@@ -375,20 +410,18 @@ def cost_method_html(by_model, scope):
         excl = (f'<p class="excl">Excluded (no rate): {esc(", ".join(unpriced))}. '
                 f'Add them to <code>pricing.py</code> to include their API cost.</p>')
     category_help = "".join(
-        f'<p><b>{esc(label)}:</b> {esc(help_text)}</p>'
+        f'<li><b>{esc(label)}:</b> {esc(help_text)}</li>'
         for _, label, help_text in pricing.CATEGORY_SPECS
     )
+    category_help = f'<ul class="category-help">{category_help}</ul>'
     return (
         '<details class="pricing"><summary>How is est. API cost estimated?</summary>'
         '<div class="pricing-body">'
-        "<p>Each model's tokens are multiplied by its list rate and summed. Tokens "
-        "are attributed to the model that produced them, so a project that mixes "
-        "models is priced correctly. Cache-read and cache-write tokens are included.</p>"
+        "<p>This is an API list-price estimate. Each model's published rate is applied "
+        "to the tokens attributed to that model, including cache reads and writes.</p>"
         f'{category_help}'
         f"<p>Rates are standard published list prices per 1M tokens, as of "
-        f"<b>{esc(pricing.AS_OF)}</b>: no batch, priority, or long-context tiers and "
-        "no volume/enterprise discounts, so read totals as an order-of-magnitude "
-        "estimate.</p>"
+        f"<b>{esc(pricing.AS_OF)}</b>.</p>"
         f'{_breakdown_table(by_model, scope)}'
         '<p class="sh">Rates used (per 1M tokens):</p>'
         f'{_grid_open(["model", *cat_labels])}{"".join(rate_rows)}{_GRID_CLOSE}'
@@ -425,7 +458,7 @@ def model_family(m):
 
 
 def mag(m):
-    """Per-entry 'work magnitude': active time if timed, else tokens out."""
+    """Per-entry 'work magnitude': agent active time if timed, else tokens out."""
     return m["activity"]["duration_ms"] or m["activity"]["tokens_out"]
 
 
@@ -455,7 +488,7 @@ def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
     cards = [
         (fmt_num(sessions), f'session{_s(sessions)}'),
         (fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
-        (fmt_dur(active_ms), "active time"),
+        (fmt_dur(active_ms), "agent active time"),
         (fmt_num(tokens_out), "tokens out"),
         (fmt_num(days_active), f'day{_s(days_active)} active'),
         (cost_text, cost_label, cost_title),
@@ -782,6 +815,8 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing-body{max-width:660px;margin:14px 0 0;text-align:left;
   color:var(--dim);font-size:11.5px;line-height:1.55}
 .pricing-body p{margin:0 0 9px}
+.pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
+.pricing-body li{padding-left:2px}
 .pricing-body p.sh{margin:18px 0 6px}   /* section heading: air above, tight to its table */
 .pricing-body code{font-size:11px;color:var(--ink)}
 .pricing table{border-collapse:collapse;margin:0;font-variant-numeric:tabular-nums}
@@ -1327,7 +1362,7 @@ def render(tl, home=None, refreshed_at=None):
                 bits.append(
                     f'{g["recovered"]} recovered prompt{_s(g["recovered"])}')
             if g.get("active"):
-                bits.append(f'{fmt_dur(g["active"])} active')
+                bits.append(f'{fmt_dur(g["active"])} agent active')
             if g.get("files"):
                 bits.append(f'{len(g["files"])} file{_s(len(g["files"]))}')
             if g.get("tok"):
@@ -1392,7 +1427,7 @@ def render(tl, home=None, refreshed_at=None):
                 f'turn{_s(a["assistant_turns"])}</span>'
             ]
             if a["duration_ms"]:
-                stat_bits.append(f'<span><b>{esc(fmt_dur(a["duration_ms"]))}</b> active</span>')
+                stat_bits.append(f'<span><b>{esc(fmt_dur(a["duration_ms"]))}</b> agent active</span>')
             if a["tokens_out"]:
                 stat_bits.append(f'<span><b>{esc(fmt_num(a["tokens_out"]))}</b> tok out</span>')
             icost, itext, _, _ = cost_display(a.get("tokens_by_model") or {})
@@ -1639,7 +1674,7 @@ def render_index(entries, refreshed_at=None, source_label=None):
         cells = [
             f'<b>{s["sessions"]}</b> session{_s(s["sessions"])}',
             f'<b>{_input_count(s)}</b> input{_s(_input_count(s))}',
-            f'<b>{esc(fmt_dur(s["active_ms"]))}</b> active',
+            f'<b>{esc(fmt_dur(s["active_ms"]))}</b> agent active',
             f'<b>{len(s["files_changed"])}</b> file{_s(len(s["files_changed"]))}',
             f'<b>{esc(fmt_num(s["tokens_out"]))}</b> tok out',
             f'~<b>{esc(cost_display(s.get("tokens_by_model") or {})[1])}</b>',
