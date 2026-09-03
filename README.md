@@ -357,8 +357,8 @@ excludes batch, priority, long-context, volume, and enterprise pricing.
 
 A dollar figure ending in `+` is partial because at least one model has no
 listed rate. The accounting panel shows each unpriced model and its token count;
-add the missing model to `pricing.py` to include its API cost. The page labels a
-complete figure `est. API cost` and a partial figure `partial est. API cost`.
+add the missing model to `pricing.py` to include its API cost. The page labels
+the figure `est. API cost`; a trailing `+` marks an incomplete estimate.
 
 ## Development
 

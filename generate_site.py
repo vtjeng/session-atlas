@@ -276,7 +276,6 @@ def cost_display(by_model):
     label = "est. API cost"
     if unpriced:
         shown += "+"
-        label = "partial est. API cost"
     title = cost_breakdown_title(by_model or {})
     return total, shown, label, title
 
