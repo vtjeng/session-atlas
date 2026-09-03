@@ -521,12 +521,6 @@ def _group_codex_timelines(timelines):
     return grouped
 
 
-def _eyebrow(tools):
-    """Human label for a set of tools, e.g. 'Claude Code + Codex'."""
-    return " + ".join("Claude Code" if t == "claude" else t.capitalize()
-                      for t in tools) or "Claude Code"
-
-
 # --------------------------------------------------------------- rendering -- #
 # Design language: two voices on a time spine. Everything the human typed is
 # serif with a session-colored square marker; machine activity is mono inside
@@ -650,9 +644,6 @@ body.has-right-rail{padding-right:56px}
 
 /* ---- hero ---- */
 header.hero{padding:46px 0 30px;border-bottom:1px solid var(--line)}
-.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
-.eyebrow::before{content:"";display:inline-block;width:7px;height:7px;
-  background:var(--human);margin-right:9px}
 h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em;
   margin:12px 0 6px}
 .path{font-size:11.5px;color:var(--faint);word-break:break-all}
@@ -1523,7 +1514,6 @@ def render(tl, home=None, refreshed_at=None):
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS,
         body_class=body_class,
-        eyebrow=esc(_eyebrow(_session_tools(tl["sessions"]))),
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
         range=range_html,
@@ -1582,7 +1572,6 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
 <style>{css}</style></head><body>
 <div class="wrap">
 <header class="hero">
-  <div class="eyebrow">{eyebrow} &middot; project logs</div>
   <h1>Project logs</h1>
   <div class="path">{root}</div>
   <div class="range">{range}</div>
@@ -1671,14 +1660,11 @@ def render_index(entries, refreshed_at=None, source_label=None):
             f'<div class="strip">{"".join(bars)}</div>'
             f'<div class="pstats">{stats}</div></a>')
 
-    all_tools = _session_tools(x for _, tl in entries for x in tl["sessions"])
-    label = _eyebrow(all_tools)
     return INDEX_PAGE.format(
         generator_meta=GENERATOR_META,
         favicon=favicon_link(),
         provenance=PAGE_PROVENANCE,
         css=CSS + INDEX_CSS,
-        eyebrow=esc(label),
         root=esc(source_label or "Claude Code and Codex data"),
         range=(f'<b>{esc(fmt_date(gfirst))}</b> &rarr; <b>{esc(fmt_date(glast))}</b>'
                f' &middot; {len(entries)} projects'
@@ -1703,7 +1689,6 @@ PAGE = """<!doctype html><html lang="en"><head>
 {topbar}
 <div class="wrap">
 <header class="hero">
-  <div class="eyebrow">{eyebrow} &middot; project log</div>
   <h1>{project}</h1>
   <div class="path">{path}</div>
   <div class="range">{range}</div>
