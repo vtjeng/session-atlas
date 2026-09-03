@@ -213,7 +213,9 @@ class TranscriptFixtureTests(unittest.TestCase):
         # The fixture has one Shell call, so both aggregate and per-turn tool
         # readouts exercise the name-before-count × syntax and shared color.
         self.assertIn('<b class="model-turns">&times;3</b> turns</span>', page)
-        self.assertIn('<span class="chip">Shell <b class="tool-count">&times;1</b></span>', page)
+        self.assertIn(
+            '<span class="chip"><span class="tool-name">Shell</span> '
+            '<b class="tool-count">&times;1</b></span>', page)
         self.assertIn(
             '<span><span class="tn">Shell</span> '
             '<span class="tool-count">&times;1</span></span>', page)
