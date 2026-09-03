@@ -303,9 +303,10 @@ right-hand gutter so switching between project pages does not shift the layout.
 
 The top ribbon places entries from all sections on one chronological axis and
 colors them by session. The right-hand minimap uses square-root-scaled tick
-widths for entries with more active time, or more output tokens when timing data
-is unavailable. The project index uses square-root-scaled bar heights for
-active time, with output tokens as the fallback when timing data is unavailable.
+widths for entries with more agent active time, or more output tokens when
+timing data is unavailable. The project index uses square-root-scaled bar
+heights for agent active time, with output tokens as the fallback when timing
+data is unavailable.
 
 The generator renders timestamps in the local timezone of the machine that
 runs it. Transcript timestamps are stored in UTC.
@@ -347,8 +348,8 @@ unsafe slugs and existing project-directory symlinks instead of writing outside
 Claude Code token totals come from assistant `usage` fields, and duration totals
 come from system `turn_duration` records. Codex CLI token totals come from
 changes in cumulative `token_count` records. Because Codex does not record turn
-durations, the parser estimates active time from each input timestamp through
-the last activity record before the next input.
+durations, the parser estimates agent active time from each input timestamp
+through the last activity record before the next input.
 
 API cost is an estimate based on the per-model list rates in `pricing.py`. The
 expandable accounting panel explains each token category and shows the rates

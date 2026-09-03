@@ -206,6 +206,17 @@ class AccountingTests(unittest.TestCase):
             self.assertTrue(label)
             self.assertTrue(help_text)
 
+    def test_model_breakdowns_use_shared_family_capability_order(self):
+        model_ids = [
+            "gpt-5.6-sol", "claude-opus-5", "gpt-5.3-codex",
+            "claude-haiku-4-5", "claude-sonnet-5", "codex-auto-review",
+        ]
+        ordered = sorted(model_ids, key=generate_site._model_sort_key)
+        self.assertEqual(ordered, [
+            "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5",
+            "gpt-5.3-codex", "gpt-5.6-sol", "codex-auto-review",
+        ])
+
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {
             "claude-opus-4-8": {"in": 1_000_000, "out": 0, "cr": 0,
