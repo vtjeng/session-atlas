@@ -193,6 +193,8 @@ class AccountingTests(unittest.TestCase):
         card = generate_site.cost_method_html(
             {"claude-fable-5-1": tokens}, "test")
         self.assertIn('<td class="mdl fam-claude">fable-5-1</td>', card)
+        self.assertIn('Estimated cost by model (test):', card)
+        self.assertIn('<ul class="category-help"><li><b>input:</b>', card)
 
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)

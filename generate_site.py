@@ -338,7 +338,7 @@ def _breakdown_table(by_model, scope):
     models = [(mid, cats) for _, mid, cats in priced]
     multi = len(models) > 1
     cost_table = (_model_table(models, overall, lambda c, k: c[k]["cost"], fmt_cost,
-                               f'API cost by model &mdash; {esc(scope)}:', multi)
+                               f'Estimated cost by model ({esc(scope)}):', multi)
                   if models else "")
 
     token_models = []
@@ -375,20 +375,18 @@ def cost_method_html(by_model, scope):
         excl = (f'<p class="excl">Excluded (no rate): {esc(", ".join(unpriced))}. '
                 f'Add them to <code>pricing.py</code> to include their API cost.</p>')
     category_help = "".join(
-        f'<p><b>{esc(label)}:</b> {esc(help_text)}</p>'
+        f'<li><b>{esc(label)}:</b> {esc(help_text)}</li>'
         for _, label, help_text in pricing.CATEGORY_SPECS
     )
+    category_help = f'<ul class="category-help">{category_help}</ul>'
     return (
         '<details class="pricing"><summary>How is est. API cost estimated?</summary>'
         '<div class="pricing-body">'
-        "<p>Each model's tokens are multiplied by its list rate and summed. Tokens "
-        "are attributed to the model that produced them, so a project that mixes "
-        "models is priced correctly. Cache-read and cache-write tokens are included.</p>"
+        "<p>The estimate applies each model's list rate to its token usage, including "
+        "cache reads and writes.</p>"
         f'{category_help}'
         f"<p>Rates are standard published list prices per 1M tokens, as of "
-        f"<b>{esc(pricing.AS_OF)}</b>: no batch, priority, or long-context tiers and "
-        "no volume/enterprise discounts, so read totals as an order-of-magnitude "
-        "estimate.</p>"
+        f"<b>{esc(pricing.AS_OF)}</b>.</p>"
         f'{_breakdown_table(by_model, scope)}'
         '<p class="sh">Rates used (per 1M tokens):</p>'
         f'{_grid_open(["model", *cat_labels])}{"".join(rate_rows)}{_GRID_CLOSE}'
@@ -782,6 +780,8 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing-body{max-width:660px;margin:14px 0 0;text-align:left;
   color:var(--dim);font-size:11.5px;line-height:1.55}
 .pricing-body p{margin:0 0 9px}
+.pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
+.pricing-body li{padding-left:2px}
 .pricing-body p.sh{margin:18px 0 6px}   /* section heading: air above, tight to its table */
 .pricing-body code{font-size:11px;color:var(--ink)}
 .pricing table{border-collapse:collapse;margin:0;font-variant-numeric:tabular-nums}
