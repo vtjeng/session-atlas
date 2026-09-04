@@ -18,7 +18,7 @@ per 1M tokens:
                the vendor doesn't bill this category, so it's never priced.
 """
 
-AS_OF = "2026-09-02"
+AS_OF = "2026-09-04"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
@@ -32,6 +32,7 @@ PRICES = {
     "claude-haiku-4-5":( 1.00,  5.00, 0.100,  1.25,  2.00),
     "claude-haiku-4-5-20251001":
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
+    "gpt-6-astra":     (10.00, 50.00, 1.000, 12.50, None),
     "gpt-5.6":         ( 4.00, 20.00, 0.400,  5.00, None),
     "gpt-5.6-sol":     ( 4.00, 20.00, 0.400,  5.00, None),
     "gpt-5.6-terra":   ( 2.00, 12.00, 0.200,  2.50, None),
