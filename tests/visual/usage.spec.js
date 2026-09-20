@@ -34,7 +34,13 @@ test.afterAll(() => {
 });
 
 const cardText = page => page.locator('.stats').innerText();
-const axisText = async page => (await page.locator('.uaxis').innerText()).replace(/\s+/g, ' ');
+// The window as the toolbar states it: both date inputs and the day count.
+const windowText = async page => [
+  await page.locator('#uFrom').inputValue(),
+  await page.locator('#uTo').inputValue(),
+  (await page.locator('#uDays').innerText()).trim(),
+].join(' ');
+const readoutText = async page => (await page.locator('#uRo').innerText()).replace(/\s+/g, ' ');
 
 test('window presets, dates, and the hash recompute the cards', async ({ page }) => {
   await page.clock.setFixedTime(FIXTURE_REFRESH);
@@ -43,44 +49,47 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   const height = await page.evaluate(() => document.documentElement.scrollHeight);
 
   // The fixture spans four days, so "7d" ending on the refresh day covers
-  // everything: the axis and every card stay as the server rendered them.
-  await page.click('.preset[data-p="7"]');
-  expect(await axisText(page)).toBe('Mar 12, 2026 4 DAYS Mar 15, 2026');
+  // everything: the select snaps back to "all", the day ticks stay daily, and
+  // every tile stays as the server rendered it.
+  await page.selectOption('#uWin', '7');
+  expect(await windowText(page)).toBe('2026-03-12 2026-03-15 · 4 days');
+  expect(await page.locator('#uWin').inputValue()).toBe('all');
+  expect((await page.locator('.uaxis').innerText()).replace(/\s+/g, ' ')).toBe('Mar 12 Mar 13 Mar 14 Mar 15');
   expect(await cardText(page)).toBe(serverCards);
-  await expect(page.locator('.preset.on')).toHaveText('all');
 
   // A one-day window on the docs-site day: one prompt in one four-minute
   // session, priced under a dollar, with 300k of 328k prompt tokens cached.
   // $0.181 over four minutes is $2.715 an hour, which the double rounds down.
   await page.fill('#uTo', '2026-03-12');
   await page.locator('#uTo').dispatchEvent('change');
-  expect(await axisText(page)).toBe('Mar 12, 2026 1 DAY Mar 12, 2026');
+  expect(await windowText(page)).toBe('2026-03-12 2026-03-12 · 1 day');
+  expect(await page.locator('#uWin').inputValue()).toBe('custom');
   expect(page.url()).toMatch(/#2026-03-12\.\.2026-03-12$/);
   const oneDay = (await cardText(page)).replace(/\s+/g, ' ');
   expect(oneDay).toBe(
-    '1 SESSION 1 INPUT 4m AGENT ACTIVE TIME 4.5k TOKENS OUT '
-    + '1 DAY ACTIVE <$1 EST. API COST 1 day LONGEST STREAK 4m BUSIEST DAY · MAR 12');
-  expect((await page.locator('.rates').innerText()).replace(/\s+/g, ' '))
-    .toBe('$2.71 per active hour $0.18 per input 91% cache hit rate');
+    'SESSION 1 1.0 inputs per session INPUT 1 $0.18 per input '
+    + 'AGENT ACTIVE TIME 4m $2.71 per active hour TOKENS OUT 4.5k 4.5k per input '
+    + 'DAY ACTIVE 1 of 1 day EST. API COST <$1 91% cache hit rate '
+    + 'LONGEST STREAK 1 day Mar 12 BUSIEST DAY 4m Thu · Mar 12');
 
   // Moving the from-date past the to-date pulls the to-date along.
   await page.fill('#uFrom', '2026-03-14');
   await page.locator('#uFrom').dispatchEvent('change');
-  expect(await axisText(page)).toBe('Mar 14, 2026 1 DAY Mar 14, 2026');
+  expect(await windowText(page)).toBe('2026-03-14 2026-03-14 · 1 day');
 
   // A hash navigation selects the window and metric without a reload; the
   // example-project day carries two sessions and $3 of est. API cost.
   await page.goto(pathToFileURL(path.join(siteDir, 'index.html')).href + '#2026-03-15..2026-03-15/act');
-  expect(await axisText(page)).toBe('Mar 15, 2026 1 DAY Mar 15, 2026');
+  expect(await windowText(page)).toBe('2026-03-15 2026-03-15 · 1 day');
   await expect(page.locator('.metric.on')).toHaveText('agent active time');
-  expect((await cardText(page)).replace(/\s+/g, ' ')).toContain('2 SESSIONS 3 INPUTS 29m');
+  expect((await cardText(page)).replace(/\s+/g, ' ')).toContain('SESSIONS 2 1.5 inputs per session INPUTS 3');
   // 29 minutes rounds up to a 40-minute top gridline with a 20-minute middle.
   await expect(page.locator('#uYTop')).toHaveText('40m');
   await expect(page.locator('#uYMid')).toHaveText('20m');
 
-  // Back to everything: the recomputed cards equal the server render exactly,
+  // Back to everything: the recomputed tiles equal the server render exactly,
   // the hash clears, and no state change moved the page.
-  await page.click('.preset[data-p="all"]');
+  await page.selectOption('#uWin', 'all');
   await page.click('.metric[data-m="cost"]');
   expect(await cardText(page)).toBe(serverCards);
   expect(new URL(page.url()).hash).toBe('');
@@ -99,7 +108,7 @@ test('the minimap brush and the chart drag select windows', async ({ page }) => 
   await page.mouse.down();
   await page.mouse.move(mini.x + col * 2.5, mini.y + mini.height / 2, { steps: 4 });
   await page.mouse.up();
-  expect(await axisText(page)).toBe('Mar 13, 2026 2 DAYS Mar 14, 2026');
+  expect(await windowText(page)).toBe('2026-03-13 2026-03-14 · 2 days');
   expect(page.url()).toMatch(/#2026-03-13\.\.2026-03-14$/);
 
   // Dragging the brush body slides the window without resizing it.
@@ -108,22 +117,39 @@ test('the minimap brush and the chart drag select windows', async ({ page }) => 
   await page.mouse.down();
   await page.mouse.move(brush.x + brush.width / 2 + col, brush.y + brush.height / 2, { steps: 4 });
   await page.mouse.up();
-  expect(await axisText(page)).toBe('Mar 14, 2026 2 DAYS Mar 15, 2026');
+  expect(await windowText(page)).toBe('2026-03-14 2026-03-15 · 2 days');
 
   // Dragging across the main chart zooms into the covered days; hovering a
-  // column shows that day's readout.
-  await page.click('.preset[data-p="all"]');
+  // column shows that day in the readout, and a click pins it there.
+  await page.selectOption('#uWin', 'all');
   const plot = await page.locator('#uPlot .ubars').boundingBox();
   const pcol = plot.width / 4;
   await page.mouse.move(plot.x + pcol * 0.5, plot.y + 40);
   await page.mouse.down();
   await page.mouse.move(plot.x + pcol * 3.5, plot.y + 40, { steps: 6 });
   await page.mouse.up();
-  expect(await axisText(page)).toBe('Mar 12, 2026 4 DAYS Mar 15, 2026');
-  await page.mouse.move(plot.x + pcol * 3.5, plot.y + 60);
-  const tip = (await page.locator('#uTip').innerText()).replace(/\s+/g, ' ');
-  expect(tip).toContain('Sun · Mar 15, 2026');
-  expect(tip).toContain('$2.84 est. API cost · 58.0k tokens out · 29m agent active');
-  expect(tip).toContain('3 inputs · 2 sessions started');
-  expect(tip).toContain('example-project $2.84');
+  expect(await windowText(page)).toBe('2026-03-12 2026-03-15 · 4 days');
+  // The readout rests on the last active day until a hover replaces it.
+  expect(await readoutText(page)).toContain('Sun · Mar 15, 2026');
+  await page.mouse.move(plot.x + pcol * 0.5, plot.y + 60);
+  const hovered = await readoutText(page);
+  expect(hovered).toContain('Thu · Mar 12, 2026');
+  expect(hovered).toContain('$0.18 est. API cost · 4.5k tokens out · 4m agent active · 1 input · 1 session started');
+  expect(hovered).toContain('sonnet-5 $0.18 · docs-site $0.18');
+  await page.mouse.move(plot.x + pcol * 2.5, plot.y + 60);
+  expect(await readoutText(page)).toContain('Sat · Mar 14, 2026 unpin no activity');
+  // Click to pin Mar 12: leaving the chart keeps it, and the unpin button clears it.
+  await page.mouse.click(plot.x + pcol * 0.5, plot.y + 60);
+  await page.mouse.move(10, 10);
+  expect(await readoutText(page)).toContain('Thu · Mar 12, 2026');
+  await expect(page.locator('#uPin')).toBeEnabled();
+  await page.click('#uPin');
+  expect(await readoutText(page)).toContain('Sun · Mar 15, 2026');
+  await expect(page.locator('#uPin')).toBeDisabled();
+  // Arrow keys step the pinned day while the chart has focus.
+  await page.locator('#uPlot').focus();
+  await page.keyboard.press('ArrowLeft');
+  expect(await readoutText(page)).toContain('Sat · Mar 14, 2026');
+  await page.keyboard.press('Home');
+  expect(await readoutText(page)).toContain('Thu · Mar 12, 2026');
 });

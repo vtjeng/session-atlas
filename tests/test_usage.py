@@ -6,8 +6,8 @@ import unittest
 from ccx_parse import build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
 from generate_site import (_axis_cost, _daily_series, _merge_timelines, _nice,
-                           _rates_html, _series_window, _usage_html, parse_ts,
-                           render, render_index)
+                           _series_window, _tick_step, _tile_details, _usage_html,
+                           parse_ts, render, render_index)
 
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
@@ -74,13 +74,19 @@ class UsageSeriesTests(unittest.TestCase):
         # the busiest day is the 29-minute example-project day at index 3.
         self.assertEqual(window["streak"], 1)
         self.assertEqual(window["busy"], 3)
-        # Rates for the fixture site: $3.02 over 0.55 active hours is $5.50 an
-        # hour; over four inputs it is $0.76 each; 2.3M cache reads out of
-        # 2.488M prompt tokens is a 92% hit rate.
-        rates = _rates_html(window)
-        self.assertIn("<b>$5.50</b> per active hour", rates)
-        self.assertIn("<b>$0.76</b> per input", rates)
-        self.assertIn("<b>92%</b> cache hit rate", rates)
+        # Tile details for the fixture site: $3.02 over 0.55 active hours is
+        # $5.50 an hour; over four inputs it is $0.76 each; 2.3M cache reads
+        # out of 2.488M prompt tokens is a 92% hit rate; 62.5k output tokens
+        # over four inputs is 15.6k each; the one-day streak names its day.
+        details = _tile_details(series, window)
+        self.assertEqual(details["active"], "<b>$5.50</b> per active hour")
+        self.assertEqual(details["inputs"], "<b>$0.76</b> per input")
+        self.assertEqual(details["cost"], "<b>92%</b> cache hit rate")
+        self.assertEqual(details["tok"], "<b>15.6k</b> per input")
+        self.assertEqual(details["sessions"], "<b>1.3</b> inputs per session")
+        self.assertEqual(details["days"], "of 4 days")
+        self.assertEqual(details["streak"], "Mar 12")
+        self.assertEqual(details["busiest"], "Sun · Mar 15")
 
     def test_window_summary_streak_and_busiest_day(self):
         # Three consecutive active days form the streak; the fourth active day
@@ -92,8 +98,11 @@ class UsageSeriesTests(unittest.TestCase):
         whole = _series_window(series)
         tail = _series_window(series, 4, 6)
 
-        self.assertEqual((whole["streak"], whole["busy"], whole["days"]), (3, 3, 5))
+        self.assertEqual((whole["streak"], whole["streak_start"]), (3, 2))
+        self.assertEqual((whole["busy"], whole["busy_v"], whole["days"]), (3, 900, 5))
         self.assertEqual((tail["streak"], tail["busy"], tail["days"]), (1, 4, 2))
+        # The three-day streak runs Jan 3 to Jan 5 in the tile detail.
+        self.assertEqual(_tile_details(series, whole)["streak"], "Jan 3 – Jan 5")
 
     def test_axis_rounding_gives_round_gridlines(self):
         # Each top value must halve to another round number for the middle
@@ -103,6 +112,11 @@ class UsageSeriesTests(unittest.TestCase):
         # Only a half-dollar middle line needs cents; the ladder keeps every
         # other gridline value whole.
         self.assertEqual([_axis_cost(0.5), _axis_cost(2000)], ["$0.50", "$2,000"])
+        # At most eight ticks: daily up to 8 days, weekly up to 8 weeks, then
+        # monthly steps; 3000 days would show more than eight yearly ticks, so
+        # the step doubles to two years.
+        self.assertEqual([_tick_step(n) for n in (4, 8, 9, 30, 56, 57, 204, 3000)],
+                         [1, 1, 2, 7, 7, 14, 30, 730])
 
     def test_explorer_needs_two_active_days_and_only_the_index_persists(self):
         entries = _fixture_entries()
@@ -118,10 +132,15 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertNotIn('class="usage"', project_page)
         self.assertIn('data-k="streak"', project_page)
         self.assertIn("busiest day", project_page)
-        self.assertIn("per active hour", project_page)
+        self.assertIn("<b>$5.88</b> per active hour", project_page)
         # The index spans two active days and mirrors its window in the URL.
         self.assertIn('<section class="usage" id="usage" data-persist>', index_page)
         self.assertIn('id="usageData">{"first":', index_page)
+        # The static readout inspects the last active day; the window select
+        # starts on "all" with a hidden "custom" entry for brushed windows.
+        self.assertIn('<time id="uRoDate">Sun · Mar 15, 2026</time>', index_page)
+        self.assertIn('<option value="all" selected>all</option>'
+                      '<option value="custom" disabled hidden>custom</option>', index_page)
         # A one-day project window is the same series machinery with no explorer.
         one_day = _daily_series([(None, entries[1][1])], refreshed)
         self.assertEqual(_usage_html(one_day), "")

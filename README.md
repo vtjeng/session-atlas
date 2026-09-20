@@ -4,9 +4,9 @@ session-atlas turns local Claude Code and Codex CLI transcripts into static HTML
 timelines.
 
 The project index summarizes activity across projects. Its usage explorer
-charts est. API cost, tokens out, or agent active time by day. Presets, date
-inputs, and a minimap brush select a window, and the summary cards recompute
-for it.
+charts est. API cost, tokens out, or agent active time by day. A window select,
+date inputs, and a minimap brush choose the days shown, and the summary tiles
+recompute for them.
 
 <p align="center"><img src="docs/images/project-index-preview.png" alt="Project index with an activity summary and two project cards" width="720"></p>
 
@@ -105,18 +105,26 @@ expanded API cost details, and session content.
 The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
-The usage explorer above the cards charts one metric per day: est. API cost,
-tokens out, or agent active time. The `7d`, `30d`, and `90d` presets end on the
-refresh day, the date inputs set an exact window, and the minimap under the
-chart is a brush: drag inside it to move the window, drag an edge to resize it,
-or drag on an empty part to draw a new one. Dragging across the chart itself
-zooms into the covered days. Hovering a day shows its cost, tokens, active time,
-inputs, sessions started, and the models and projects behind the cost.
+The usage explorer above the tiles charts one metric per day: est. API cost,
+tokens out, or agent active time. The toolbar's window select offers `7d`,
+`30d`, and `90d`, which end on the refresh day, and `all`; it reads `custom`
+after any other window. The two dates at the left are inputs, so a click on
+either opens a date picker. The minimap under the chart is a brush: drag inside
+it to move the window, drag a grip to resize it, or drag on an empty part to
+draw a new one. Dragging across the chart itself zooms into the covered days.
 
-The cards below recompute for the selected window. Two cards are new: the
-longest streak of consecutive active days, and the day with the most agent
-active time. The rates line divides the cost estimate by agent active time and
-by inputs, and shows the share of prompt tokens served from cache.
+The readout between the toolbar and the chart inspects one day: its cost,
+tokens, active time, inputs, sessions started, and the models and projects
+behind the cost. It follows the pointer, a click pins it to a day, and the
+arrow keys step it while the chart has focus. Without a hover or a pin it shows
+the window's last active day.
+
+The tiles below recompute for the selected window. Two tiles are new: the
+longest streak of consecutive active days, with its dates, and the day with
+the most agent active time. Each tile carries one derived figure: inputs per
+session, cost per input, cost per active hour, tokens out per input, the share
+of the window's days that were active, the share of prompt tokens served from
+cache, and the streak's and busiest day's dates.
 
 ![Project index summary including estimated API cost](docs/images/project-log-summary.png)
 
@@ -131,10 +139,9 @@ represented in each project.
 ### Project overview
 
 An individual project page summarizes its sessions, activity, models, tools,
-and estimated API cost, with the same streak, busiest-day, and rate figures as
-the index. A project with activity on two or more days also gets the usage
-explorer. An expandable panel explains the estimate and breaks it down by model
-and token category.
+and estimated API cost in the same tiles as the index. A project with activity
+on two or more days also gets the usage explorer. An expandable panel explains
+the estimate and breaks it down by model and token category.
 
 ![Individual project overview with activity statistics](docs/images/project-overview.png)
 
@@ -420,7 +427,7 @@ npm run test:visual
 
 The same command runs `tests/visual/usage.spec.js`, which drives the usage
 explorer with JavaScript enabled under a fixed clock and checks that the
-recomputed cards match the server-rendered ones.
+recomputed tiles match the server-rendered ones.
 
 An intentional visual change requires regenerating and reviewing the images
 before committing them. A failed visual check writes the actual, expected, and
