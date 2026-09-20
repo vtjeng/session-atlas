@@ -1,0 +1,146 @@
+import os
+import shutil
+import tempfile
+import unittest
+
+from ccx_parse import build_timeline
+from codex_parse import build_codex_timelines, rollout_paths
+from generate_site import (_axis_cost, _daily_series, _merge_timelines, _nice,
+                           _rates_html, _series_window, _usage_html, parse_ts,
+                           render, render_index)
+
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
+
+
+def _fixture_entries():
+    """The two synthetic projects, merged the way ``--all`` merges them."""
+    claude = os.path.join(FIXTURES, "claude")
+    example = build_timeline(os.path.join(claude, "-home-demo-src-example-project"))
+    docs = build_timeline(os.path.join(claude, "-home-demo-src-docs-site"))
+    codex = build_codex_timelines(rollout_paths(os.path.join(FIXTURES, "codex")))
+    merged = _merge_timelines([example, *codex])
+    return [("docs-site", docs), ("example-project", merged)]
+
+
+class UsageSeriesTests(unittest.TestCase):
+    def test_daily_series_buckets_fixture_activity_by_local_day(self):
+        entries = _fixture_entries()
+        docs, example = entries[0][1], entries[1][1]
+        # The refresh time is the last fixture activity, so the series ends on
+        # the last active day and the idle tail stays out of this test.
+        last_ts = max(m["ts"] for _, tl in entries for m in tl["milestones"])
+        refreshed = parse_ts(last_ts)
+
+        series = _daily_series(entries, refreshed)
+
+        docs_day = parse_ts(docs["milestones"][0]["ts"]).date()
+        example_day = parse_ts(example["milestones"][0]["ts"]).date()
+        # docs-site is three days before example-project in every timezone,
+        # so the dense series has two active days around two idle ones.
+        self.assertEqual(series["first"], docs_day.isoformat())
+        self.assertEqual((example_day - docs_day).days, 3)
+        self.assertEqual(len(series["days"]), 4)
+        self.assertEqual(series["days"][1:3], [None, None])
+        first, last = series["days"][0], series["days"][3]
+        # One prompt in one session: the docs-site fixture's whole content.
+        self.assertEqual((first["s"], first["i"]), (1, 1))
+        self.assertEqual(first["p"], {"docs-site": first["c"]})
+        # Two sessions (Claude plus Codex) with three inputs on the last day,
+        # and the two vendors' models each priced separately.
+        self.assertEqual((last["s"], last["i"]), (2, 3))
+        self.assertEqual(
+            set(last["m"]), {"claude-opus-4-8", "claude-sonnet-5", "gpt-5.6-sol"})
+        self.assertAlmostEqual(sum(last["m"].values()), last["c"], places=3)
+        self.assertNotIn("u", last)   # every fixture model has a list rate
+
+    def test_window_summary_matches_aggregate_statistics(self):
+        entries = _fixture_entries()
+        refreshed = parse_ts(max(tl["stats"]["last_ts"] for _, tl in entries))
+        series = _daily_series(entries, refreshed)
+
+        window = _series_window(series)
+
+        # Summing the series over the whole range must reproduce the totals
+        # the hero cards show, or the "all" preset would change the numbers.
+        stats = [tl["stats"] for _, tl in entries]
+        self.assertEqual(window["s"], sum(s["sessions"] for s in stats))
+        self.assertEqual(
+            window["i"], sum(s["prompts"] + s["commands"] for s in stats))
+        self.assertEqual(window["a"], sum(s["active_ms"] for s in stats))
+        self.assertEqual(window["o"], sum(s["tokens_out"] for s in stats))
+        self.assertEqual(window["days"], 2)
+        # Two active days separated by idle days never form a longer streak;
+        # the busiest day is the 29-minute example-project day at index 3.
+        self.assertEqual(window["streak"], 1)
+        self.assertEqual(window["busy"], 3)
+        # Rates for the fixture site: $3.02 over 0.55 active hours is $5.50 an
+        # hour; over four inputs it is $0.76 each; 2.3M cache reads out of
+        # 2.488M prompt tokens is a 92% hit rate.
+        rates = _rates_html(window)
+        self.assertIn("<b>$5.50</b> per active hour", rates)
+        self.assertIn("<b>$0.76</b> per input", rates)
+        self.assertIn("<b>92%</b> cache hit rate", rates)
+
+    def test_window_summary_streak_and_busiest_day(self):
+        # Three consecutive active days form the streak; the fourth active day
+        # is isolated. The busiest day is the one with the most active time.
+        series = {"first": "2026-01-01", "days": [
+            {"a": 100, "i": 1}, None, {"a": 50, "i": 1}, {"a": 900, "i": 1},
+            {"a": 10, "i": 1}, None, {"a": 5, "i": 1}]}
+
+        whole = _series_window(series)
+        tail = _series_window(series, 4, 6)
+
+        self.assertEqual((whole["streak"], whole["busy"], whole["days"]), (3, 3, 5))
+        self.assertEqual((tail["streak"], tail["busy"], tail["days"]), (1, 4, 2))
+
+    def test_axis_rounding_gives_round_gridlines(self):
+        # Each top value must halve to another round number for the middle
+        # gridline, which the 1-2-4-10 ladder guarantees.
+        self.assertEqual([_nice(v) for v in (0.7, 3, 12.37, 58_000)],
+                         [1, 4, 20, 100_000])
+        # Only a half-dollar middle line needs cents; the ladder keeps every
+        # other gridline value whole.
+        self.assertEqual([_axis_cost(0.5), _axis_cost(2000)], ["$0.50", "$2,000"])
+
+    def test_explorer_needs_two_active_days_and_only_the_index_persists(self):
+        entries = _fixture_entries()
+        refreshed = parse_ts(max(tl["stats"]["last_ts"] for _, tl in entries))
+
+        project_page = render(entries[1][1], refreshed_at=refreshed)
+        index_page = render_index(
+            [("docs", entries[0][1]), ("example", entries[1][1])],
+            refreshed_at=refreshed)
+
+        # example-project has one active day: nothing to explore, but the new
+        # cards and rates still render from its series.
+        self.assertNotIn('class="usage"', project_page)
+        self.assertIn('data-k="streak"', project_page)
+        self.assertIn("busiest day", project_page)
+        self.assertIn("per active hour", project_page)
+        # The index spans two active days and mirrors its window in the URL.
+        self.assertIn('<section class="usage" id="usage" data-persist>', index_page)
+        self.assertIn('id="usageData">{"first":', index_page)
+        # A one-day project window is the same series machinery with no explorer.
+        one_day = _daily_series([(None, entries[1][1])], refreshed)
+        self.assertEqual(_usage_html(one_day), "")
+
+    def test_empty_transcript_file_is_not_a_session(self):
+        src = os.path.join(FIXTURES, "claude", "-home-demo-src-example-project")
+        with tempfile.TemporaryDirectory() as tmp:
+            project_dir = os.path.join(tmp, "-home-demo-src-example-project")
+            shutil.copytree(src, project_dir)
+            # Claude Code can leave a zero-byte session file behind; it has no
+            # records, so it must not count as a conversation.
+            open(os.path.join(project_dir, "44444444-4444-4444-8444-444444444444.jsonl"),
+                 "w").close()
+
+            timeline = build_timeline(project_dir)
+
+        self.assertEqual(timeline["stats"]["sessions"], 1)
+        self.assertEqual([s["id"][:8] for s in timeline["sessions"]], ["11111111"])
+
+
+if __name__ == "__main__":
+    unittest.main()

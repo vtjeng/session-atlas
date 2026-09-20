@@ -3,7 +3,10 @@
 session-atlas turns local Claude Code and Codex CLI transcripts into static HTML
 timelines.
 
-The project index summarizes activity across projects.
+The project index summarizes activity across projects. Its usage explorer
+charts est. API cost, tokens out, or agent active time by day. Presets, date
+inputs, and a minimap brush select a window, and the summary cards recompute
+for it.
 
 <p align="center"><img src="docs/images/project-index-preview.png" alt="Project index with an activity summary and two project cards" width="720"></p>
 
@@ -102,6 +105,19 @@ expanded API cost details, and session content.
 The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
+The usage explorer above the cards charts one metric per day: est. API cost,
+tokens out, or agent active time. The `7d`, `30d`, and `90d` presets end on the
+refresh day, the date inputs set an exact window, and the minimap under the
+chart is a brush: drag inside it to move the window, drag an edge to resize it,
+or drag on an empty part to draw a new one. Dragging across the chart itself
+zooms into the covered days. Hovering a day shows its cost, tokens, active time,
+inputs, sessions started, and the models and projects behind the cost.
+
+The cards below recompute for the selected window. Two cards are new: the
+longest streak of consecutive active days, and the day with the most agent
+active time. The rates line divides the cost estimate by agent active time and
+by inputs, and shows the share of prompt tokens served from cache.
+
 ![Project index summary including estimated API cost](docs/images/project-log-summary.png)
 
 ### Project index cards
@@ -115,8 +131,10 @@ represented in each project.
 ### Project overview
 
 An individual project page summarizes its sessions, activity, models, tools,
-and estimated API cost. An expandable panel explains the estimate and breaks it
-down by model and token category.
+and estimated API cost, with the same streak, busiest-day, and rate figures as
+the index. A project with activity on two or more days also gets the usage
+explorer. An expandable panel explains the estimate and breaks it down by model
+and token category.
 
 ![Individual project overview with activity statistics](docs/images/project-overview.png)
 
@@ -308,6 +326,15 @@ timing data is unavailable. The project index uses square-root-scaled bar
 heights for agent active time, with output tokens as the fallback when timing
 data is unavailable.
 
+The usage explorer buckets activity by local day, from the first activity
+through the refresh day, so a quiet week shows as empty days. A session counts
+on the day of its first entry. The index mirrors the selected window and metric
+in the URL fragment, for example `#30d`, `#2026-03-01..2026-03-15`, or
+`#7d/act` for agent active time, so a bookmarked fragment reopens that view.
+Project pages use the fragment for entry anchors and do not persist their
+window. Without JavaScript the explorer shows the whole history and the
+controls are inert.
+
 The generator renders timestamps in the local timezone of the machine that
 runs it. Transcript timestamps are stored in UTC.
 
@@ -390,6 +417,10 @@ verify that the generated pixels match the baselines:
 ```bash
 npm run test:visual
 ```
+
+The same command runs `tests/visual/usage.spec.js`, which drives the usage
+explorer with JavaScript enabled under a fixed clock and checks that the
+recomputed cards match the server-rendered ones.
 
 An intentional visual change requires regenerating and reviewing the images
 before committing them. A failed visual check writes the actual, expected, and

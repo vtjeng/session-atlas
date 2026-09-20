@@ -25,7 +25,7 @@ import re
 import tempfile
 import unicodedata
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -470,30 +470,303 @@ def _sc_var(num):
 def _stat_cards_html(cards):
     """Hero stat grid shared by the project page and the index-page hero.
 
-    Each card is ``(number, label)`` or ``(number, label, tooltip)``.
+    Each card is ``(key, number, label)`` or ``(key, number, label, tooltip)``.
+    The key is a ``data-k`` hook the usage explorer uses to recompute the card
+    for the selected date window.
     """
     out = []
     for c in cards:
-        n, l = c[0], c[1]
-        tip = f' title="{esc(c[2])}"' if len(c) > 2 and c[2] else ""
-        out.append(f'<div class="stat"{tip}><div class="n">{esc(n)}</div>'
+        k, n, l = c[0], c[1], c[2]
+        tip = f' title="{esc(c[3])}"' if len(c) > 3 and c[3] else ""
+        out.append(f'<div class="stat" data-k="{esc(k)}"{tip}><div class="n">{esc(n)}</div>'
                    f'<div class="l lbl">{esc(l)}</div></div>')
     return "".join(out)
 
 
 def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
-                        days_active, by_model):
-    """Build the shared summary metrics used by project and index heroes."""
+                        days_active, by_model, streak=0, busiest=None):
+    """Build the shared summary metrics used by project and index heroes.
+
+    ``busiest`` is ``(day_ordinal, active_ms)`` for the day with the most agent
+    active time, or None when no day has timing data.
+    """
     _, cost_text, cost_label, cost_title = cost_display(by_model or {})
+    if busiest:
+        busy_n = fmt_dur(busiest[1])
+        busy_l = f"busiest day · {_fmt_day_short(busiest[0])}"
+    else:
+        busy_n, busy_l = "—", "busiest day"
     cards = [
-        (fmt_num(sessions), f'session{_s(sessions)}'),
-        (fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
-        (fmt_dur(active_ms), "agent active time"),
-        (fmt_num(tokens_out), "tokens out"),
-        (fmt_num(days_active), f'day{_s(days_active)} active'),
-        (cost_text, cost_label, cost_title),
+        ("sessions", fmt_num(sessions), f'session{_s(sessions)}'),
+        ("inputs", fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
+        ("active", fmt_dur(active_ms), "agent active time"),
+        ("tok", fmt_num(tokens_out), "tokens out"),
+        ("days", fmt_num(days_active), f'day{_s(days_active)} active'),
+        ("cost", cost_text, cost_label, cost_title),
+        ("streak", f"{streak} day{_s(streak)}", "longest streak",
+         "Longest run of consecutive days with activity in this range"),
+        ("busiest", busy_n, busy_l,
+         "Day with the most agent active time in this range"),
     ]
     return cards
+
+
+# ------------------------------------------------------------ usage series -- #
+# The hero chart and the live stat cards share one dense per-day series. The
+# generator embeds it as JSON and renders the all-time state; the client
+# re-sums it for the selected window so the chart, cards, and rates agree.
+# Day keys: s sessions started, i inputs, a active ms, o tokens out, ti uncached
+# input, cr cache read, cw cache write, c est. cost, u unpriced flag, m cost by
+# model, p cost by project (index only). Idle days are null.
+USAGE_METRICS = (("cost", "est. API cost"), ("tok", "tokens out"),
+                 ("act", "agent active time"))
+USAGE_PRESETS = (7, 30, 90)
+USAGE_MIN_ACTIVE_DAYS = 2   # a one-day history has nothing to explore
+
+
+def _day_ordinal(ts):
+    d = parse_ts(ts)
+    return d.date().toordinal() if d else None
+
+
+def _fmt_day(o):
+    return date.fromordinal(o).strftime("%b %-d, %Y")
+
+
+def _fmt_day_short(o):
+    return date.fromordinal(o).strftime("%b %-d")
+
+
+def _nice(v):
+    """Smallest 1, 2, 4, or 10 × 10^k at or above v: the chart's top gridline.
+    Halving any of these gives another round number for the middle line."""
+    if v <= 0:
+        return 1
+    e = 10.0 ** math.floor(math.log10(v))
+    for m in (1, 2, 4, 10):
+        r = m * e
+        if r >= v - 1e-9:
+            return int(r) if r >= 1 else r
+    return int(10 * e)
+
+
+def _half(v):
+    h = v / 2
+    return int(h) if float(h).is_integer() else h
+
+
+def _axis_cost(v):
+    return f"${v:.2f}" if v < 1 else f"${round(v):,}"
+
+
+def _fmt_money(d):
+    """Dollar amount with cents below $100; per-day and per-unit figures need them."""
+    return f"${d:,.0f}" if d >= 100 else f"${d:.2f}"
+
+
+def _daily_series(entries, refreshed):
+    """Dense per-day usage for one or many timelines.
+
+    ``entries`` is ``[(label, timeline)]``; ``label`` names the project in the
+    per-day ``p`` split and is only used when there is more than one entry.
+    Returns ``{"first": ISO date, "days": [...]}`` covering every local day
+    from the first activity through the refresh day, or None without any
+    dated milestone. A session counts on the day of its first milestone.
+    """
+    buckets = {}
+
+    def day_bucket(o):
+        return buckets.setdefault(o, {
+            "s": 0, "i": 0, "a": 0, "o": 0, "ti": 0, "cr": 0, "cw": 0,
+            "by_model": {}, "p": {}})
+
+    multi = len(entries) > 1
+    for label, tl in entries:
+        first_day = {}
+        for m in tl["milestones"]:
+            o = _day_ordinal(m["ts"])
+            if o is None:
+                continue
+            sid = m["session"]
+            if sid not in first_day or o < first_day[sid]:
+                first_day[sid] = o
+            a = m["activity"]
+            b = day_bucket(o)
+            if m["kind"] in ("prompt", "command", "recovered"):
+                b["i"] += 1
+            b["a"] += a["duration_ms"]
+            b["o"] += a["tokens_out"]
+            b["ti"] += a["tokens_in"]
+            b["cr"] += a["cache_read"]
+            b["cw"] += a["cache_create"]
+            merge_token_models(b["by_model"], a.get("tokens_by_model"))
+            if multi:
+                c = pricing.estimate_cost(a.get("tokens_by_model") or {})
+                if c:
+                    b["p"][label] = b["p"].get(label, 0.0) + c
+        for session in tl["sessions"]:
+            if _is_automated_codex(session):
+                continue
+            o = first_day.get(session["id"])
+            if o is None:
+                o = _day_ordinal(session.get("last_ts"))
+            if o is not None:
+                day_bucket(o)["s"] += 1
+    if not buckets:
+        return None
+    first = min(buckets)
+    last = max(max(buckets), refreshed.date().toordinal())
+    days = []
+    for o in range(first, last + 1):
+        b = buckets.get(o)
+        if b is None:
+            days.append(None)
+            continue
+        _, total, unpriced = pricing.cost_breakdown(b["by_model"])
+        d = {k: b[k] for k in ("s", "i", "a", "o", "ti", "cr", "cw") if b[k]}
+        if total:
+            d["c"] = round(total, 4)
+        if unpriced:
+            d["u"] = 1
+        by_model_cost = {
+            mid: round(pricing.estimate_cost({mid: tk}), 4)
+            for mid, tk in b["by_model"].items()}
+        by_model_cost = {k: v for k, v in by_model_cost.items() if v}
+        if by_model_cost:
+            d["m"] = by_model_cost
+        if b["p"]:
+            d["p"] = {k: round(v, 4) for k, v in b["p"].items()}
+        days.append(d)
+    return {"first": date.fromordinal(first).isoformat(), "days": days}
+
+
+def _series_window(series, a=0, b=None):
+    """Sum ``days[a..b]`` the way the client does for the selected window.
+
+    Returns the flat sums plus ``days`` (active days), ``streak`` (longest run
+    of consecutive active days), ``busy`` (index of the day with the most
+    active time, or None), ``m`` (cost by model), and ``u`` (partial cost).
+    """
+    days = series["days"]
+    if b is None:
+        b = len(days) - 1
+    t = {"s": 0, "i": 0, "a": 0, "o": 0, "ti": 0, "cr": 0, "cw": 0, "c": 0.0,
+         "u": False, "days": 0, "streak": 0, "busy": None, "m": {}}
+    run = busy_v = 0
+    for i in range(a, b + 1):
+        d = days[i]
+        if d is None:
+            run = 0
+            continue
+        run += 1
+        t["streak"] = max(t["streak"], run)
+        t["days"] += 1
+        for k in ("s", "i", "a", "o", "ti", "cr", "cw"):
+            t[k] += d.get(k, 0)
+        t["c"] += d.get("c", 0)
+        t["u"] = t["u"] or bool(d.get("u"))
+        if d.get("a", 0) > busy_v:
+            busy_v = d["a"]
+            t["busy"] = i
+        for mid, c in (d.get("m") or {}).items():
+            t["m"][mid] = t["m"].get(mid, 0) + c
+    return t
+
+
+def _busiest_day(series, w):
+    """``(day_ordinal, active_ms)`` for the window summary's busiest day."""
+    if w["busy"] is None:
+        return None
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    return first_o + w["busy"], series["days"][w["busy"]]["a"]
+
+
+def _rates_html(w):
+    """Derived rates under the stat cards: cost per active hour, cost per
+    input, and the share of prompt tokens served from cache."""
+    plus = "+" if w["u"] else ""
+    per_hour = f'{_fmt_money(w["c"] / (w["a"] / 3_600_000))}{plus}' if w["a"] else "—"
+    per_input = f'{_fmt_money(w["c"] / w["i"])}{plus}' if w["i"] else "—"
+    prompt_tokens = w["ti"] + w["cr"] + w["cw"]
+    hit = f'{round(w["cr"] / prompt_tokens * 100)}%' if prompt_tokens else "—"
+    return (
+        '<div class="rates">'
+        '<span data-k="hour" title="Estimated API cost divided by agent active '
+        f'time in this range"><b>{esc(per_hour)}</b> per active hour</span>'
+        '<span data-k="input" title="Estimated API cost divided by the inputs '
+        f'in this range"><b>{esc(per_input)}</b> per input</span>'
+        '<span data-k="hit" title="Share of prompt tokens served from cache: '
+        'cache reads over uncached input, cache reads, and cache writes">'
+        f'<b>{esc(hit)}</b> cache hit rate</span></div>')
+
+
+def _bars_html(values, vmax, titles=None):
+    """A ``.ubars`` grid: one bar per value, heights relative to ``vmax``."""
+    n = len(values)
+    cls = "ubars" + (" packed" if n > 240 else " dense" if n > 90 else "")
+    bars = []
+    for i, v in enumerate(values):
+        h = v / vmax * 100 if vmax else 0
+        tip = f' title="{esc(titles[i])}"' if titles else ""
+        bars.append(f'<i style="height:{h:.2f}%"{tip}></i>')
+    return (f'<div class="{cls}" style="grid-template-columns:repeat({n},1fr)">'
+            f'{"".join(bars)}</div>')
+
+
+def _usage_html(series, *, persist=False):
+    """The hero's usage explorer, rendered for the whole series with the cost
+    metric; ``USAGE_JS`` takes over for windowing, other metrics, and hover.
+
+    ``persist`` makes the client mirror its window in the URL fragment, which
+    only the index can afford: project pages use the fragment for entries.
+    """
+    days = series["days"]
+    if sum(1 for d in days if d is not None) < USAGE_MIN_ACTIVE_DAYS:
+        return ""
+    n = len(days)
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    vals = [d.get("c", 0) if d else 0 for d in days]
+    vmax = max(vals)
+    top = _nice(vmax)
+    titles = [
+        f'{_fmt_day(first_o + i)} · '
+        f'{_fmt_money(v) + " est. API cost" if d else "no activity"}'
+        for i, (d, v) in enumerate(zip(days, vals))]
+    presets = "".join(
+        f'<button type="button" class="preset" data-p="{p}">{p}d</button>'
+        for p in USAGE_PRESETS)
+    metrics = "".join(
+        f'<button type="button" class="metric{" on" if k == "cost" else ""}" '
+        f'data-m="{k}">{esc(label)}</button>' for k, label in USAGE_METRICS)
+    iso_first, iso_last = series["first"], date.fromordinal(first_o + n - 1).isoformat()
+    payload = json.dumps(series, separators=(",", ":")).replace("</", "<\\/")
+    return (
+        f'<section class="usage" id="usage"{" data-persist" if persist else ""}>'
+        '<div class="uhead"><div class="uwin">'
+        f'<div class="seg" role="group" aria-label="date range">{presets}'
+        '<button type="button" class="preset on" data-p="all">all</button></div>'
+        '<div class="udates">'
+        f'<label>from <input type="date" id="uFrom" value="{iso_first}" '
+        f'min="{iso_first}" max="{iso_last}"></label>'
+        f'<label>to <input type="date" id="uTo" value="{iso_last}" '
+        f'min="{iso_first}" max="{iso_last}"></label></div></div>'
+        f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
+        '</div>'
+        '<div class="uchart">'
+        f'<span class="uy" id="uYTop" style="bottom:100%">{esc(_axis_cost(top))}</span>'
+        '<i class="ugl" style="bottom:100%"></i>'
+        f'<span class="uy" id="uYMid" style="bottom:50%">{esc(_axis_cost(_half(top)))}</span>'
+        '<i class="ugl" style="bottom:50%"></i>'
+        f'<div class="uplot" id="uPlot">{_bars_html(vals, top, titles)}'
+        '<i class="uhov" id="uHov" hidden></i><i class="usel" id="uSel" hidden></i>'
+        '<div class="utip" id="uTip" hidden></div></div></div>'
+        f'<div class="uaxis"><span id="uXa">{esc(_fmt_day(first_o))}</span>'
+        f'<span class="lbl" id="uXn">{n} day{_s(n)}</span>'
+        f'<span id="uXb">{esc(_fmt_day(first_o + n - 1))}</span></div>'
+        f'<div class="umini" id="uMini">{_bars_html(vals, vmax)}'
+        '<div class="brush" id="uBrush" style="left:0%;width:100%"></div></div>'
+        f'<script type="application/json" id="usageData">{payload}</script>'
+        '</section>')
 
 
 def _session_tools(sessions):
@@ -682,7 +955,7 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .range{font-size:12px;color:var(--dim);margin-top:12px}
 .range b{color:var(--ink);font-weight:600}
 .age{color:var(--faint);white-space:nowrap}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 26px;margin-top:30px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 26px;margin-top:28px}
 .stat{border-top:1px solid var(--line);padding-top:9px}
 .stat .n{font-size:21px;font-weight:600;letter-spacing:-.02em}
 .stat .l{margin-top:2px}
@@ -836,6 +1109,74 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing tr.tot td{border-top:1px solid var(--spine);color:var(--ink);font-weight:600}
 .pricing .tw{overflow-x:auto}
 .pricing .excl{margin-top:12px;color:var(--faint)}
+
+/* ---- usage explorer: filter row, daily bars, minimap brush. The gutter
+   (--ugut) holds the y labels and aligns the plot and minimap columns. ---- */
+.usage{--ugut:50px;margin-top:26px}
+.uhead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+  gap:8px 18px}
+.uwin{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.seg{display:inline-flex;height:22px;border:1px solid var(--line);border-radius:5px;
+  background:var(--panel);overflow:hidden}
+.seg button{appearance:none;-webkit-appearance:none;border:0;border-left:1px solid var(--line);
+  background:none;padding:0 9px;font-size:11px;color:var(--dim);cursor:pointer;
+  transition:color .12s,background .12s}
+.seg button:first-child{border-left:0}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--panel2);color:var(--ink)}
+.seg button:focus-visible{outline:2px solid var(--machine);outline-offset:-2px}
+.udates{display:inline-flex;align-items:center;gap:8px}
+.udates label{display:inline-flex;align-items:center;gap:5px;font-size:10px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.udates input{font:inherit;font-size:11px;height:22px;padding:0 6px;color:var(--dim);
+  background:var(--panel);border:1px solid var(--line);border-radius:5px}
+.udates input:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
+.uchart{position:relative;height:150px;margin-top:14px;padding-left:var(--ugut)}
+.ugl{position:absolute;left:var(--ugut);right:0;height:1px;background:var(--line)}
+.uy{position:absolute;left:0;width:42px;text-align:right;font-size:10px;line-height:1;
+  white-space:nowrap;color:var(--faint);transform:translateY(50%);font-variant-numeric:tabular-nums}
+.uplot{position:relative;height:100%;border-bottom:1px solid var(--spine);
+  touch-action:none;-webkit-user-select:none;user-select:none}
+.ubars{display:grid;align-items:end;gap:0 2px;height:100%}
+.ubars.dense{gap:0 1px}
+.ubars.packed{gap:0}
+.ubars i{display:block;width:100%;max-width:24px;justify-self:center;
+  background:var(--bar);border-radius:2px 2px 0 0;transition:background .12s}
+.ubars i.hot{background:color-mix(in srgb,var(--bar) 55%,var(--ink))}
+.uhov{position:absolute;top:0;bottom:0;pointer-events:none;
+  background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.usel{position:absolute;top:0;bottom:0;pointer-events:none;
+  background:color-mix(in srgb,var(--ink) 10%,transparent);
+  border-left:1px solid var(--ink);border-right:1px solid var(--ink)}
+.uhov[hidden],.usel[hidden],.utip[hidden]{display:none}
+.utip{position:absolute;z-index:5;pointer-events:none;padding:7px 10px;
+  background:var(--panel);border:1px solid var(--line);border-radius:6px;
+  font-size:11px;line-height:1.5;color:var(--dim);white-space:nowrap;
+  box-shadow:0 4px 14px color-mix(in srgb,#000 25%,transparent)}
+.utip .d{color:var(--ink);font-weight:600;margin-bottom:2px}
+.utip b{color:var(--ink);font-weight:600}
+.utip .mdl{color:var(--machine)}
+.utip .mdl.fam-claude{color:var(--claude)}
+.utip .mdl.fam-gpt{color:var(--codex)}
+.uaxis{display:flex;justify-content:space-between;gap:12px;margin-top:6px;
+  padding-left:var(--ugut);font-size:10px;color:var(--faint)}
+.umini{position:relative;height:34px;margin:10px 0 0 var(--ugut);
+  border-bottom:1px solid var(--line);cursor:crosshair;touch-action:none;
+  -webkit-user-select:none;user-select:none}
+.umini .ubars{gap:0 1px}
+.umini .ubars i{border-radius:0;opacity:.45}
+.brush{position:absolute;top:0;bottom:-1px;box-sizing:border-box;cursor:grab;
+  background:color-mix(in srgb,var(--ink) 10%,transparent);
+  border-left:1.5px solid var(--ink);border-right:1.5px solid var(--ink)}
+.brush::before,.brush::after{content:"";position:absolute;top:0;bottom:0;width:11px;
+  cursor:ew-resize}
+.brush::before{left:-6px}
+.brush::after{right:-6px}
+/* an integer line height keeps the content below on whole pixels: a fractional
+   offset re-rasterizes every border and bold glyph in the screenshots below */
+.rates{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:16px;font-size:11px;
+  line-height:16px;color:var(--dim)}
+.rates b{color:var(--ink);font-weight:600}
 
 @media (max-width:640px){
   .stats{grid-template-columns:repeat(2,1fr)}
@@ -1090,6 +1431,208 @@ if(refreshEls.length){
 """
 
 
+# Usage explorer: re-sums the embedded per-day series for the selected window
+# and repaints the chart, brush, stat cards, and rates. Number formats mirror
+# fmt_num, fmt_dur, fmt_cost, and _fmt_money so a recomputed card matches the
+# server-rendered one for the same window.
+USAGE_JS = """
+(function(){
+const box=document.getElementById('usage'); if(!box) return;
+const D=JSON.parse(document.getElementById('usageData').textContent);
+const days=D.days, N=days.length, MS=86400000;
+const dayNum=iso=>{const [y,m,d]=iso.split('-').map(Number);return Math.round(Date.UTC(y,m-1,d)/MS);};
+const D0=dayNum(D.first);
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const dateOf=i=>new Date((D0+i)*MS);
+const isoOf=i=>dateOf(i).toISOString().slice(0,10);
+const fmtDate=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate()+', '+d.getUTCFullYear();};
+const fmtShort=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate();};
+const todayIdx=()=>{const t=new Date();return Math.round(Date.UTC(t.getFullYear(),t.getMonth(),t.getDate())/MS)-D0;};
+const clamp=i=>Math.max(0,Math.min(N-1,i));
+const s=n=>n===1?'':'s';
+const loc=n=>Math.round(n).toLocaleString('en-US');
+const fmtNum=n=>n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
+const fmtDur=ms=>{if(!ms)return '\\u2014';const sec=ms/1000;if(sec<60)return Math.round(sec)+'s';
+  const m=sec/60;if(m<60)return Math.round(m)+'m';const h=Math.floor(m/60);return h+'h '+Math.floor(m%60)+'m';};
+const fmtCost=d=>!d?'$0':d<1?'<$1':'$'+loc(d);
+const fmtMoney=d=>d>=100?'$'+loc(d):'$'+d.toFixed(2);
+const axisCost=v=>v<1?'$'+v.toFixed(2):'$'+loc(v);
+const nice=v=>{if(v<=0)return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));
+  for(const m of [1,2,4,10]){if(m*e>=v-1e-9)return m*e;}return 10*e;};
+const niceMs=ms=>{const min=ms/6e4;if(min<=60){for(const m of [1,2,4,10,20,40,60])if(m>=min-1e-9)return m*6e4;}
+  return nice(min/60)*36e5;};
+const cleanModel=m=>m.replace(/claude-/g,'');
+const family=m=>{m=m.toLowerCase();if(/^(claude|opus|sonnet|haiku|fable)/.test(m))return 'claude';
+  if(/^(gpt|chatgpt|codex|o1|o3|o4)/.test(m))return 'gpt';return '';};
+const axisDur=ms=>{const h=ms/36e5;return h>=1&&Number.isInteger(h)?h+'h':fmtDur(ms);};
+const METRIC={
+  cost:{get:d=>d.c||0,nice:nice,axis:axisCost},
+  tok:{get:d=>d.o||0,nice:nice,axis:fmtNum},
+  act:{get:d=>d.a||0,nice:niceMs,axis:axisDur}};
+const $=id=>document.getElementById(id);
+const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), tip=$('uTip'), hov=$('uHov'), sel=$('uSel');
+const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
+const yTop=$('uYTop'), yMid=$('uYMid'), xA=$('uXa'), xB=$('uXb'), xN=$('uXn');
+const fromIn=$('uFrom'), toIn=$('uTo');
+const presets=[...box.querySelectorAll('.preset')], metrics=[...box.querySelectorAll('.metric')];
+const cards={}; document.querySelectorAll('.stat[data-k]').forEach(el=>{cards[el.dataset.k]=el;});
+const rates={}; document.querySelectorAll('.rates [data-k]').forEach(el=>{rates[el.dataset.k]=el;});
+const persist=box.hasAttribute('data-persist');
+let metric='cost', A=0, B=N-1, hot=-1;
+bars.querySelectorAll('i[title]').forEach(i=>i.removeAttribute('title'));   // the live readout replaces native tooltips
+
+const dens=n=>n>240?' packed':n>90?' dense':'';
+function paintBars(el,a,b,M,vmax){
+  const n=b-a+1; let h='';
+  for(let i=a;i<=b;i++){const v=days[i]?M.get(days[i]):0; h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';}
+  el.className='ubars'+dens(n); el.style.gridTemplateColumns='repeat('+n+',1fr)'; el.innerHTML=h;
+}
+function maxIn(a,b,M){let v=0;for(let i=a;i<=b;i++){if(days[i]){const x=M.get(days[i]);if(x>v)v=x;}}return v;}
+function sumWin(a,b){
+  const t={s:0,i:0,a:0,o:0,ti:0,cr:0,cw:0,c:0,u:false,days:0,streak:0,busy:-1,busyV:0,m:{}}; let run=0;
+  for(let i=a;i<=b;i++){const d=days[i]; if(!d){run=0;continue;}
+    run++; if(run>t.streak)t.streak=run; t.days++;
+    t.s+=d.s||0; t.i+=d.i||0; t.a+=d.a||0; t.o+=d.o||0; t.ti+=d.ti||0; t.cr+=d.cr||0; t.cw+=d.cw||0; t.c+=d.c||0;
+    if(d.u)t.u=true; if((d.a||0)>t.busyV){t.busyV=d.a;t.busy=i;}
+    for(const k in (d.m||{}))t.m[k]=(t.m[k]||0)+d.m[k];}
+  return t;
+}
+function setCard(k,n,l,title){const el=cards[k]; if(!el) return;
+  el.querySelector('.n').textContent=n; if(l!=null) el.querySelector('.l').textContent=l;
+  if(title!=null) el.title=title;}
+function setRate(k,v){const el=rates[k]; if(el) el.querySelector('b').textContent=v;}
+function paintCards(){
+  const w=sumWin(A,B), plus=w.u?'+':'';
+  setCard('sessions',fmtNum(w.s),'session'+s(w.s));
+  setCard('inputs',fmtNum(w.i),'input'+s(w.i));
+  setCard('active',fmtDur(w.a));
+  setCard('tok',fmtNum(w.o));
+  setCard('days',fmtNum(w.days),'day'+s(w.days)+' active');
+  const split=Object.entries(w.m).sort((x,y)=>y[1]-x[1]).map(([k,v])=>cleanModel(k)+' '+fmtCost(v)).join(' \\u00b7 ');
+  setCard('cost',fmtCost(w.c)+plus,null,split);
+  setCard('streak',w.streak+' day'+s(w.streak));
+  setCard('busiest',w.busy>=0?fmtDur(w.busyV):'\\u2014',w.busy>=0?'busiest day \\u00b7 '+fmtShort(w.busy):'busiest day');
+  setRate('hour',w.a?fmtMoney(w.c/(w.a/36e5))+plus:'\\u2014');
+  setRate('input',w.i?fmtMoney(w.c/w.i)+plus:'\\u2014');
+  const pt=w.ti+w.cr+w.cw; setRate('hit',pt?Math.round(w.cr/pt*100)+'%':'\\u2014');
+}
+function presetOf(){                        // which preset the window equals, if any
+  if(A===0&&B===N-1) return 'all';
+  const t=clamp(todayIdx());
+  for(const b of presets){const p=+b.dataset.p; if(p&&B===t&&A===Math.max(0,t-p+1)) return b.dataset.p;}
+  return null;
+}
+function render(){
+  const M=METRIC[metric], n=B-A+1, top=M.nice(maxIn(A,B,M));
+  paintBars(bars,A,B,M,top);
+  yTop.textContent=M.axis(top); yMid.textContent=M.axis(top/2);
+  xA.textContent=fmtDate(A); xB.textContent=fmtDate(B); xN.textContent=n+' day'+s(n);
+  brush.style.left=(A/N*100)+'%'; brush.style.width=(n/N*100)+'%';
+  const on=presetOf(); presets.forEach(b=>b.classList.toggle('on',b.dataset.p===on));
+  fromIn.value=isoOf(A); toIn.value=isoOf(B);
+  hideTip(); paintCards();
+}
+function renderMini(){ const M=METRIC[metric]; paintBars(mbars,0,N-1,M,maxIn(0,N-1,M)); }
+function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
+function syncUrl(){ if(!persist) return;
+  const p=presetOf(); const r=p==='all'?'':p?p+'d':isoOf(A)+'..'+isoOf(B);
+  const h=(r||metric!=='cost')?'#'+r+(metric!=='cost'?'/'+metric:''):'';
+  if(h!==location.hash) history.replaceState(null,'',location.pathname+location.search+h);
+}
+function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1); else setWin(t-(+p)+1,t); }
+function setMetric(k){ if(k===metric) return; metric=k;
+  metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
+function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..2026-03-15", "#7d/act"
+  const m=/^#?([^/]*)(?:\\/(cost|tok|act))?$/.exec(location.hash)||[];
+  setMetric(m[2]||'cost');
+  const r=m[1]||'', pd=/^(\\d+)d$/.exec(r), cd=/^(\\d{4}-\\d{2}-\\d{2})\\.\\.(\\d{4}-\\d{2}-\\d{2})$/.exec(r);
+  if(pd) applyPreset(pd[1]); else if(cd) setWin(dayNum(cd[1])-D0,dayNum(cd[2])-D0); else applyPreset('all');
+}
+
+// ---- controls
+presets.forEach(b=>b.addEventListener('click',()=>{applyPreset(b.dataset.p);syncUrl();}));
+metrics.forEach(b=>b.addEventListener('click',()=>{setMetric(b.dataset.m); syncUrl();}));
+// a from-date past the to-date pulls the to-date along (and the reverse), never swaps them
+const onDate=e=>{ if(!fromIn.value||!toIn.value) return;
+  let a=dayNum(fromIn.value)-D0, b=dayNum(toIn.value)-D0;
+  if(a>b){ if(e.target===fromIn) b=a; else a=b; }
+  setWin(a,b); syncUrl(); };
+fromIn.addEventListener('change',onDate); toIn.addEventListener('change',onDate);
+if(persist) addEventListener('hashchange',readUrl);
+
+// ---- minimap brush: drag inside to move, an edge to resize, outside to draw anew
+let mode=null, x0=0, A0=0, B0=0;
+const idxAt=(x,el)=>{const r=el.getBoundingClientRect();return clamp(Math.floor((x-r.left)/r.width*N));};
+mini.addEventListener('pointerdown',e=>{
+  const r=mbars.getBoundingClientRect(); if(!r.width) return;
+  const lx=r.left+A/N*r.width, rx=r.left+(B+1)/N*r.width, x=e.clientX;
+  // moving a brush that already spans everything is a no-op, so draw anew instead
+  const whole=A===0&&B===N-1;
+  mode=Math.abs(x-lx)<=7?'l':Math.abs(x-rx)<=7?'r':(x>lx&&x<rx&&!whole)?'m':'n';
+  x0=x; A0=A; B0=B; mini.setPointerCapture(e.pointerId); e.preventDefault();
+  if(mode==='n'){const i=idxAt(x,mbars); setWin(i,i);}
+});
+mini.addEventListener('pointermove',e=>{ if(!mode) return;
+  const r=mbars.getBoundingClientRect(); if(!r.width) return;
+  const i=idxAt(e.clientX,mbars);
+  if(mode==='m'){ const span=B0-A0, a=Math.max(0,Math.min(N-1-span,A0+Math.round((e.clientX-x0)/r.width*N))); setWin(a,a+span); }
+  else if(mode==='l') setWin(Math.min(i,B),B);
+  else if(mode==='r') setWin(A,Math.max(i,A));
+  else { const j=idxAt(x0,mbars); setWin(Math.min(i,j),Math.max(i,j)); }
+});
+const endBrush=()=>{ if(mode){mode=null; syncUrl();} };
+mini.addEventListener('pointerup',endBrush); mini.addEventListener('pointercancel',endBrush);
+
+// ---- main chart: hover readout per day column; drag across columns to zoom in
+function el(tag,cls,text){const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e;}
+function row(pairs){ const r=el('div'); pairs.forEach(([v,l],k)=>{ if(k) r.appendChild(document.createTextNode(' \\u00b7 '));
+  r.appendChild(el('b',null,v)); r.appendChild(document.createTextNode(' '+l)); }); tip.appendChild(r); }
+function list(obj,model){ const top=Object.entries(obj).sort((x,y)=>y[1]-x[1]); const r=el('div');
+  top.slice(0,3).forEach(([k,v],i)=>{ if(i) r.appendChild(document.createTextNode(' \\u00b7 '));
+    const name=el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k); r.appendChild(name);
+    r.appendChild(document.createTextNode(' '+fmtMoney(v))); });
+  if(top.length>3) r.appendChild(document.createTextNode(' +'+(top.length-3)+' more'));
+  tip.appendChild(r); }
+function hideTip(){ tip.hidden=true; hov.hidden=true; if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=-1; }
+function showTip(i,e){
+  const n=B-A+1, gi=A+i, d=days[gi];
+  if(hot!==i){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=i; bars.children[i].classList.add('hot'); }
+  hov.hidden=false; hov.style.left=(i/n*100)+'%'; hov.style.width=(100/n)+'%';
+  tip.textContent=''; tip.appendChild(el('div','d',DOW[dateOf(gi).getUTCDay()]+' \\u00b7 '+fmtDate(gi)));
+  if(!d) tip.appendChild(el('div',null,'no activity'));
+  else{
+    row([[fmtMoney(d.c||0)+(d.u?'+':''),'est. API cost'],[fmtNum(d.o||0),'tokens out'],[fmtDur(d.a||0),'agent active']]);
+    row([[String(d.i||0),'input'+s(d.i||0)],[String(d.s||0),'session'+s(d.s||0)+' started']]);
+    if(d.m) list(d.m,true); if(d.p) list(d.p,false);
+  }
+  tip.hidden=false;
+  const pr=plot.getBoundingClientRect(), cx=(i+0.5)/n*pr.width, tw=tip.offsetWidth, th=tip.offsetHeight;
+  let left=cx+10; if(left+tw>pr.width) left=cx-10-tw; if(left<0) left=0;
+  let top=e.clientY-pr.top-th-12; if(top<0) top=e.clientY-pr.top+16;
+  tip.style.left=left+'px'; tip.style.top=top+'px';
+}
+let drag=null;
+const colAt=x=>{const r=bars.getBoundingClientRect(), n=B-A+1; return Math.max(0,Math.min(n-1,Math.floor((x-r.left)/r.width*n)));};
+plot.addEventListener('pointerdown',e=>{ drag={x0:e.clientX,moved:false}; plot.setPointerCapture(e.pointerId); });
+plot.addEventListener('pointermove',e=>{
+  const i=colAt(e.clientX);
+  if(drag){ if(Math.abs(e.clientX-drag.x0)>4) drag.moved=true;
+    if(drag.moved){ const n=B-A+1, j=colAt(drag.x0), a=Math.min(i,j), b=Math.max(i,j);
+      sel.hidden=false; sel.style.left=(a/n*100)+'%'; sel.style.width=((b-a+1)/n*100)+'%'; hideTip(); return; } }
+  showTip(i,e);
+});
+plot.addEventListener('pointerup',e=>{
+  if(drag&&drag.moved){ const i=colAt(e.clientX), j=colAt(drag.x0); const a=A+Math.min(i,j), b=A+Math.max(i,j); drag=null; sel.hidden=true; setWin(a,b); syncUrl(); return; }
+  drag=null; sel.hidden=true;
+});
+plot.addEventListener('pointercancel',()=>{drag=null; sel.hidden=true;});
+plot.addEventListener('pointerleave',()=>{ if(!drag) hideTip(); });
+readUrl();
+})();
+"""
+
+
 def _terminal_ask(m):
     """Render Claude's bash input/output wrappers as one compact terminal line."""
     parts = m.get("terminal") or {}
@@ -1201,7 +1744,10 @@ def render(tl, home=None, refreshed_at=None):
 
     real_models = list(s["models"])
     multi_model = len(real_models) > 1
-    # ---- hero
+    refreshed = refreshed_at or now_local()
+    # ---- hero: the usage explorer and the cards read the same daily series
+    series = _daily_series([(None, tl)], refreshed)
+    window = _series_window(series) if series else None
     stat_cards = _summary_stat_cards(
         sessions=s["sessions"],
         inputs=_input_count(s),
@@ -1209,8 +1755,12 @@ def render(tl, home=None, refreshed_at=None):
         tokens_out=s["tokens_out"],
         days_active=len(days_active),
         by_model=s.get("tokens_by_model"),
+        streak=window["streak"] if window else 0,
+        busiest=_busiest_day(series, window) if window else None,
     )
     stats_html = _stat_cards_html(stat_cards)
+    usage_html = _usage_html(series) if series else ""
+    rates_html = _rates_html(window) if window else ""
 
     chips = []
     for m in real_models:
@@ -1236,7 +1786,6 @@ def render(tl, home=None, refreshed_at=None):
                          if session["id"] in sess_agg]
     total = len(rendered_sessions)
 
-    refreshed = refreshed_at or now_local()
     range_html = ""
     if first:
         n_days = (last_dt.date() - first_dt.date()).days + 1 if first_dt and last_dt else 1
@@ -1546,12 +2095,14 @@ def render(tl, home=None, refreshed_at=None):
         favicon=favicon_link(),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
-        css=CSS, js=JS + REFRESH_JS,
+        css=CSS, js=JS + REFRESH_JS + USAGE_JS,
         body_class=body_class,
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
         range=range_html,
+        usage=usage_html,
         stats=stats_html,
+        rates=rates_html,
         chips="".join(chips),
         minimap=minimap, topbar=topbar,
         timeline="".join(nodes),
@@ -1609,7 +2160,9 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
   <h1>Project logs</h1>
   <div class="path">{root}</div>
   <div class="range">{range}</div>
+  {usage}
   <div class="stats">{stats}</div>
+  {rates}
   {costnote}
 </header>
 <div class="axislbl"><span>{gfirst}</span><span class="lbl">taller = more activity</span><span>{glast}</span></div>
@@ -1650,6 +2203,8 @@ def render_index(entries, refreshed_at=None, source_label=None):
         for m in tl["milestones"]
         if (d := parse_ts(m["ts"]))
     }
+    series = _daily_series([(tl["project_name"], tl) for _, tl in entries], refreshed)
+    window = _series_window(series) if series else None
     stat_cards = _summary_stat_cards(
         sessions=tot["sessions"],
         inputs=tot["inputs"],
@@ -1657,8 +2212,12 @@ def render_index(entries, refreshed_at=None, source_label=None):
         tokens_out=tot["tok"],
         days_active=len(all_days_active),
         by_model=all_by_model,
+        streak=window["streak"] if window else 0,
+        busiest=_busiest_day(series, window) if window else None,
     )
     stats_html = _stat_cards_html(stat_cards)
+    usage_html = _usage_html(series, persist=True) if series else ""
+    rates_html = _rates_html(window) if window else ""
 
     rows = []
     for sub, tl in sorted(entries, key=lambda e: e[1]["stats"]["last_ts"] or "", reverse=True):
@@ -1703,12 +2262,14 @@ def render_index(entries, refreshed_at=None, source_label=None):
         range=(f'<b>{esc(fmt_date(gfirst))}</b> &rarr; <b>{esc(fmt_date(glast))}</b>'
                f' &middot; {len(entries)} projects'
                f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}'),
+        usage=usage_html,
         stats=stats_html,
+        rates=rates_html,
         gfirst=esc(fmt_date(gfirst)), glast=esc(fmt_date(glast)),
         rows="".join(rows),
         n=len(entries),
         refreshed=refresh_stamp(refreshed),
-        js=REFRESH_JS,
+        js=REFRESH_JS + USAGE_JS,
         costnote=cost_method_html(all_by_model, "all projects"),
     )
 
@@ -1726,7 +2287,9 @@ PAGE = """<!doctype html><html lang="en"><head>
   <h1>{project}</h1>
   <div class="path">{path}</div>
   <div class="range">{range}</div>
+  {usage}
   <div class="stats">{stats}</div>
+  {rates}
   <div class="meta-row">{chips}</div>
   {costnote}
 </header>
