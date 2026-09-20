@@ -165,10 +165,10 @@ category in one table.
 
 Each session groups prompts with the assistant activity that followed them.
 A `claude` or `codex` badge in the session header identifies the transcript
-source. When an input receives multiple textual responses, the machine readout
-shows the count and its expandable log contains bounded excerpts for each one.
-Claude's shell input/output wrappers are condensed into one-line terminal
-entries.
+source, and a click on the header collapses or expands the session. When an
+input receives multiple textual responses, the machine readout shows the count
+and its expandable log contains bounded excerpts for each one. Claude's shell
+input/output wrappers are condensed into one-line terminal entries.
 
 ![Session content with a prompt, token usage, files, and tool calls](docs/images/timeline-entry.png)
 
@@ -323,6 +323,16 @@ the parent session.
 Entries and session headings use opaque, source-backed anchors. Their values do
 not depend on the session or entry display numbers, so adding another tracked
 conversation does not retarget an existing link.
+
+Click a session header to collapse the session to its title and totals, and
+click it again to expand it. The caret at the left of the sticky bar's stepper
+collapses every session or expands them all, and keeps the current session's
+header in place on screen while the rest of the page shrinks or grows. The
+page stores which sessions are collapsed in the browser's local storage, keyed
+by the session anchor, so the choice survives a refresh of the site. A ribbon
+click or an entry link into a collapsed session expands it. Collapsed entries
+leave the minimap and the current-entry tracking, and when every session is
+collapsed the URL fragment names the session header at the reading line.
 
 The sticky bar shows the current session title. Use its previous and next
 buttons, or `j` and `k`, to move between sessions. Click the project name to

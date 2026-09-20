@@ -1182,13 +1182,14 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-.snav{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+/* prev/next, and the fold-all button ahead of them (a caret like the session headers') */
+.snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
-.snav:hover{border-color:var(--machine);color:var(--ink)}
+.snav:hover,.sfold:hover{border-color:var(--machine);color:var(--ink)}
 .snav:disabled{opacity:.35;cursor:default}
-.snav:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.snav:focus-visible,.sfold:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .sessnav[hidden]{display:none}
 
 /* ---- hero ---- */
@@ -1244,8 +1245,21 @@ a.forktag:hover,a.forktag:focus-visible{color:var(--machine);text-decoration:und
   background:var(--sc,var(--bar))}
 .sess a{text-decoration:none}
 .sess a:hover .sn,.sess a:focus-visible .sn{text-decoration:underline}
-.sess .stitle{font-size:15px;font-weight:600;margin-top:6px}
-.sess .sstats{font-size:11px;color:var(--dim);margin-top:5px}
+.sess .stitle{display:block;font-size:15px;font-weight:600;margin-top:6px}
+.sess .sstats{display:block;font-size:11px;color:var(--dim);margin-top:5px}
+/* the header is the summary of its details.session-block: a click on it folds the
+   session's entries. The caret is a clipped box the size of an entry mark, centered
+   on the spine in the entry-mark column, and turns to point right when folded; the
+   ::after box behind it breaks the spine for a few pixels above and below it. */
+summary.sess{cursor:pointer;list-style:none;user-select:none}
+summary.sess::-webkit-details-marker{display:none}
+summary.sess::before{content:"";position:absolute;left:63px;top:27px;width:10px;height:8px;
+  background:var(--faint);clip-path:polygon(0 0,100% 0,50% 100%);transition:transform .12s}
+summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;height:18px;
+  background:var(--bg);z-index:-1}
+.session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
+summary.sess:hover::before{background:var(--ink)}
+summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1466,6 +1480,8 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   h1{font-size:30px}
   .log::before,.emark{display:none}
   .entry,.sess,.gapnote{padding-left:0}
+  summary.sess::before{position:static;display:inline-block;margin-right:8px}
+  summary.sess::after{display:none}
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
@@ -1494,6 +1510,29 @@ const sessions=[...document.querySelectorAll('.sess')];
 const docTop=el=>el.getBoundingClientRect().top+window.scrollY;
 const docH=()=>document.documentElement.scrollHeight||1;
 
+// ---- folded sessions. Each session is a details.session-block whose header is
+// its summary. Closed content keeps a box in Chromium (it is
+// content-visibility:hidden, not display:none), so scroll tracking and the minimap
+// skip an entry by its block's open state, not by its geometry. Folds persist per
+// page in localStorage, keyed by the source-backed session anchor, so they survive
+// a regeneration. ----
+const blocks=[...document.querySelectorAll('details.session-block')];
+const blockOf=new WeakMap(entries.map(e=>[e,e.closest('details.session-block')]));
+const shown=e=>{const b=blockOf.get(e);return !b||b.open;};
+const anchorOf=b=>b.querySelector('.sess')?.id||'';
+const FOLD_KEY='session-atlas:folded:'+location.pathname;
+function writeFolds(){ try{
+  const ids=blocks.filter(b=>!b.open).map(anchorOf);
+  if(ids.length) localStorage.setItem(FOLD_KEY,JSON.stringify(ids)); else localStorage.removeItem(FOLD_KEY);
+}catch(e){} }
+function hashTarget(){ try{ return location.hash.length>1?document.getElementById(decodeURIComponent(location.hash.slice(1))):null; }
+  catch(e){ return null; } }
+{ let folded=[]; try{ folded=JSON.parse(localStorage.getItem(FOLD_KEY)||'[]'); }catch(e){}
+  if(!Array.isArray(folded)) folded=[];
+  // the session an entry fragment points into stays open, so the fragment can scroll to it
+  const t=hashTarget(), keep=t&&!t.matches('.sess')?t.closest('details.session-block'):null;
+  blocks.forEach(b=>{ if(b!==keep&&folded.includes(anchorOf(b))) b.open=false; }); }
+
 // The current entry is the latest one whose top has crossed the reading line,
 // defaulting to the first before any one crosses. It changes when the next
 // entry crosses the line and drives the URL anchor and ribbon playhead.
@@ -1502,8 +1541,9 @@ const entrySM=entries.length?parseFloat(getComputedStyle(entries[0]).scrollMargi
 const headOff=()=>topbar?topbar.getBoundingClientRect().bottom:entrySM;  // reading-line offset
 function currentId(){
   const line=headOff()+1;
-  let id=entries.length?entries[0].id:null;
-  for(const e of entries){ if(e.getBoundingClientRect().top<=line) id=e.id; else break; }
+  let id=null;                                     // the first shown entry until one crosses the line
+  for(const e of entries){ if(!shown(e)) continue;
+    if(id===null||e.getBoundingClientRect().top<=line) id=e.id; else break; }
   return id;
 }
 let hashTimer=null;
@@ -1534,7 +1574,8 @@ function buildMap(){
     b.style.top=(top/H*100)+'%'; b.style.height=Math.max(0,(bot-top)/H*100)+'%';
     b.style.background=sessColor(n); track.appendChild(b);
   });
-  entries.forEach(e=>{                             // one tick per entry, length=work
+  entries.forEach(e=>{                             // one tick per shown entry, length=work
+    if(!shown(e)) return;
     const n=Number(e.dataset.sessionIndex)||1;
     const w=parseFloat(e.dataset.w)||0;
     const t=document.createElement('div'); t.className='mm-tick';
@@ -1552,7 +1593,7 @@ function updateMap(){
     mmView.style.height=(window.innerHeight/H*100)+'%';
   }
   const id=currentId();
-  syncHash(id);
+  syncHash(id||sessions[posIdx()]?.id);    // every session folded: the hash names the header at the line
   if(id&&id!==curSel){                     // move the timeline marker highlight with scroll
     const prev=curSel&&document.getElementById(curSel); if(prev) prev.classList.remove('current');
     const el=document.getElementById(id);
@@ -1623,7 +1664,8 @@ function glideTo(y){target=clampY(y);settle();window.scrollTo({top:target,behavi
 function scrollToY(y,n){                    // glide to y and pin the counter to session n until we land
   curSessIdx=Math.min(sessions.length-1,Math.max(0,n)); paint(); glideTo(y); }
 function jumpToEntry(el){                   // bring an entry to the reading line, pinning its session
-  const header=el.closest('.session-block')?.querySelector('.sess');
+  const block=el.closest('details.session-block'), header=block?.querySelector('.sess');
+  if(block&&!block.open&&el!==header) block.open=true;   // unfold first, so the entry has a position to glide to
   scrollToY(docTop(el)-headOff(),Math.max(0,sessions.indexOf(header))); }
 // ribbon: click the strip -> nearest entry in time (active for a single session too)
 const rtrack=document.getElementById('rtrack');
@@ -1664,6 +1706,29 @@ if(sessions.length>1&&sessCur){
   });
 }
 curSessIdx=posIdx(); paint();               // initial counter + crumb subtitle
+
+// ---- fold-all button (in the stepper) and the toggle listener. A toggle moves
+// everything below its header: the body ResizeObserver rebuilds the minimap, and
+// the reading line is re-read here so the marker and the hash leave a hidden entry.
+const sfold=document.getElementById('sfold');
+function paintFold(){ if(!sfold) return;
+  const any=blocks.some(b=>b.open), label=(any?'collapse':'expand')+' all sessions';
+  sfold.textContent=any?'\\u25BE':'\\u25B8'; sfold.title=label; sfold.setAttribute('aria-label',label); }
+if(sfold) sfold.addEventListener('click',()=>{
+  // keep the current session's header where it is on screen, so the fold reads as
+  // the other sessions closing around it rather than as the page jumping
+  const anchor=sessions[curSessIdx], before=anchor?anchor.getBoundingClientRect().top:0;
+  const open=!blocks.some(b=>b.open); blocks.forEach(b=>{b.open=open;});
+  if(anchor){ const de=document.documentElement, prev=de.style.scrollBehavior;
+    de.style.scrollBehavior='auto'; window.scrollBy(0,anchor.getBoundingClientRect().top-before);
+    de.style.scrollBehavior=prev; }
+});
+// fold-all fires one toggle per session; the work runs once, on the next frame
+let foldRaf=0;
+addEventListener('toggle',e=>{ if(!(e.target instanceof Element)||!e.target.matches('details.session-block')) return;
+  if(foldRaf) return;
+  foldRaf=requestAnimationFrame(()=>{ foldRaf=0; writeFolds(); paintFold(); updateMap(); resync(); }); },true);
+paintFold();
 
 // ---- shared scroll + layout listeners ----
 let raf=0;
@@ -2205,6 +2270,8 @@ def render(tl, home=None, refreshed_at=None):
     stepper = ""
     if total > 1:
         stepper = ('<div class="sessnav">'
+                   f'<button class="sfold" id="sfold" title="collapse all sessions"'
+                   f' aria-label="collapse all sessions">&#9662;</button>'
                    f'<button class="snav" data-d="-1" title="previous session (k)"'
                    f' aria-label="previous session">&lsaquo;</button>'
                    f'<span class="sesscount">session <b id="sessCur">1</b> / '
@@ -2260,7 +2327,7 @@ def render(tl, home=None, refreshed_at=None):
 
         if m["session"] != cur_session:
             if session_open:
-                nodes.append('</section>')
+                nodes.append('</details>')
             cur_session = m["session"]
             session_open = True
             num = sess_idx.get(cur_session, 1)
@@ -2286,19 +2353,22 @@ def render(tl, home=None, refreshed_at=None):
                 bits.append(f'~{stext}')
             session_id = session_anchors[cur_session]
             auto_attr = " data-automated" if sess_automated.get(cur_session) else ""
-            nodes.append(f'<section class="session-block"{auto_attr}>')
+            # each session is a <details> whose header is the <summary>, so a click
+            # on the header folds the entries. Sessions start open, so the page
+            # reads the same without JavaScript.
+            nodes.append(f'<details class="session-block" open{auto_attr}>')
             # data-t: session title, surfaced live in the sticky crumb as this
             # header scrolls past the reading line (so it tracks the session stepper).
             nodes.append(
-                f'<div class="sess" id="{session_id}" data-t="{esc(stitle)}" '
+                f'<summary class="sess" id="{session_id}" data-t="{esc(stitle)}" '
                 f'data-session-index="{num}" style="{_sc_var(num)}">'
                 f'<a class="lbl" href="#{session_id}"><span class="sw"></span>'
                 f'<span class="sn">session {num:02d}</span> '
                 f'&middot; {esc(cur_session[:8])}</a> '
                 f'{tool_pill(sess_tool.get(cur_session))}'
                 f'{origin_tag(session)}'
-                f'<div class="stitle">{esc(stitle)}</div>'
-                f'<div class="sstats">{esc(" · ".join(bits))}</div></div>')
+                f'<span class="stitle">{esc(stitle)}</span>'
+                f'<span class="sstats">{esc(" · ".join(bits))}</span></summary>')
             prev_ts = None
             cur_day = None
 
@@ -2453,7 +2523,7 @@ def render(tl, home=None, refreshed_at=None):
             f'{ask}{ro}</div>')
 
     if session_open:
-        nodes.append('</section>')
+        nodes.append('</details>')
 
     return PAGE.format(
         generator_meta=GENERATOR_META,

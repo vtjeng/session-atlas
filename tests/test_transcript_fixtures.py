@@ -10,7 +10,7 @@ import warnings
 
 from ccx_parse import _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
-from generate_site import _allocate_project_slugs, render
+from generate_site import _allocate_project_slugs, _merge_timelines, render
 
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
@@ -21,7 +21,7 @@ def _entry_ids(page):
 
 
 def _session_ids(page):
-    return re.findall(r'<div class="sess" id="([^"]+)"', page)
+    return re.findall(r'<summary class="sess" id="([^"]+)"', page)
 
 
 def _fragment_refs(page):
@@ -57,6 +57,31 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertEqual(_session_ids(original), _session_ids(updated)[1:])
         for page in (original, updated):
             self.assertTrue(set(_fragment_refs(page)) <= set(_element_ids(page)))
+
+    def test_sessions_render_as_open_details(self):
+        claude_dir = os.path.join(
+            FIXTURES, "claude", "-home-demo-src-example-project")
+        claude_only = render(build_timeline(claude_dir))
+        # Every session is a details element whose summary is the header that
+        # carries the session anchor. Sessions start open, so a page read
+        # without JavaScript shows every entry.
+        blocks = re.findall(
+            r'<details class="session-block"( open)?[^>]*>'
+            r'<summary class="sess" id="([^"]+)"', claude_only)
+        self.assertEqual([sid for _, sid in blocks], _session_ids(claude_only))
+        self.assertTrue(all(is_open == " open" for is_open, _ in blocks))
+        # The fold-all button belongs to the session stepper, which renders
+        # only for more than one session: the Claude-only fixture has one
+        # session, and the merged example project has two.
+        self.assertEqual(len(blocks), 1)
+        self.assertNotIn('id="sfold"', claude_only)
+        codex = [
+            tl for tl in build_codex_timelines(
+                rollout_paths(os.path.join(FIXTURES, "codex")))
+            if tl["project_path"].rstrip("/") == "/home/demo/src/example-project"]
+        merged = render(_merge_timelines([build_timeline(claude_dir), *codex]))
+        self.assertEqual(len(_session_ids(merged)), 2)
+        self.assertEqual(merged.count('<button class="sfold" id="sfold"'), 1)
 
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:
