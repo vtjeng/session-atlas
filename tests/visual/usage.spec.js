@@ -64,6 +64,9 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   await page.locator('#uTo').dispatchEvent('change');
   expect(await windowText(page)).toBe('2026-03-12 2026-03-12 · 1 day');
   expect(await page.locator('#uWin').inputValue()).toBe('custom');
+  // The y scale is locked to the whole history, so the one-day window keeps
+  // the $4 top gridline instead of rescaling to its own $0.18 peak.
+  await expect(page.locator('#uYTop')).toHaveText('$4');
   expect(page.url()).toMatch(/#2026-03-12\.\.2026-03-12$/);
   const oneDay = (await cardText(page)).replace(/\s+/g, ' ');
   expect(oneDay).toBe(
@@ -83,9 +86,29 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   expect(await windowText(page)).toBe('2026-03-15 2026-03-15 · 1 day');
   await expect(page.locator('.metric.on')).toHaveText('agent active time');
   expect((await cardText(page)).replace(/\s+/g, ' ')).toContain('SESSIONS 2 1.5 inputs per session INPUTS 3');
-  // 29 minutes rounds up to a 40-minute top gridline with a 20-minute middle.
+  // 29 minutes on the busiest day rounds up to a 40-minute top gridline.
   await expect(page.locator('#uYTop')).toHaveText('40m');
   await expect(page.locator('#uYMid')).toHaveText('20m');
+
+  // Hourly bars for that day: 24 columns, the readout resting on the last
+  // active hour, and the model and project splits on their own lines.
+  await page.goto(pathToFileURL(path.join(siteDir, 'index.html')).href + '#2026-03-15..2026-03-15/act/hour');
+  await expect(page.locator('.interval.on')).toHaveText('hour');
+  expect(await page.locator('#uPlot .ubars i').count()).toBe(24);
+  const hourly = await readoutText(page);
+  expect(hourly).toContain('Sun · Mar 15, 2026 · 10:00–11:00');
+  // With agent active time plotted, the splits are by active time too:
+  // the 10:00 hour holds the Codex session's nine estimated minutes.
+  // (innerText carries no space after the inline-block key.)
+  expect(await page.locator('#uRo2').innerText()).toMatch(/^MODELS\s*gpt-5\.6-sol 9m$/);
+  expect(await page.locator('#uRo3').innerText()).toMatch(/^PROJECTS\s*example-project 9m$/);
+  // Weekly bars: the four fixture days share one Monday-based week.
+  await page.click('.interval[data-i="week"]');
+  await page.selectOption('#uWin', 'all');
+  expect(await page.locator('#uPlot .ubars i').count()).toBe(1);
+  expect(await readoutText(page)).toContain('Mar 12 – Mar 15, 2026');
+  expect(new URL(page.url()).hash).toBe('#/act/week');
+  await page.click('.interval[data-i="day"]');
 
   // Back to everything: the recomputed tiles equal the server render exactly,
   // the hash clears, and no state change moved the page.
@@ -135,7 +158,7 @@ test('the minimap brush and the chart drag select windows', async ({ page }) => 
   const hovered = await readoutText(page);
   expect(hovered).toContain('Thu · Mar 12, 2026');
   expect(hovered).toContain('$0.18 est. API cost · 4.5k tokens out · 4m agent active · 1 input · 1 session started');
-  expect(hovered).toContain('sonnet-5 $0.18 · docs-site $0.18');
+  expect(hovered).toMatch(/MODELS\s*sonnet-5 \$0\.18 PROJECTS\s*docs-site \$0\.18/);
   await page.mouse.move(plot.x + pcol * 2.5, plot.y + 60);
   expect(await readoutText(page)).toContain('Sat · Mar 14, 2026 unpin no activity');
   // Click to pin Mar 12: leaving the chart keeps it, and the unpin button clears it.

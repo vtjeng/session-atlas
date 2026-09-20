@@ -45,14 +45,34 @@ class UsageSeriesTests(unittest.TestCase):
         first, last = series["days"][0], series["days"][3]
         # One prompt in one session: the docs-site fixture's whole content.
         self.assertEqual((first["s"], first["i"]), (1, 1))
-        self.assertEqual(first["p"], {"docs-site": first["c"]})
+        # Splits carry [cost, tokens out, active ms] so the readout can follow
+        # the plotted metric; docs-site is the only project on its day.
+        self.assertEqual(first["p"], {"docs-site": [first["c"], first["o"], first["a"]]})
         # Two sessions (Claude plus Codex) with three inputs on the last day,
         # and the two vendors' models each priced separately.
         self.assertEqual((last["s"], last["i"]), (2, 3))
         self.assertEqual(
             set(last["m"]), {"claude-opus-4-8", "claude-sonnet-5", "gpt-5.6-sol"})
-        self.assertAlmostEqual(sum(last["m"].values()), last["c"], places=3)
+        self.assertAlmostEqual(sum(v[0] for v in last["m"].values()), last["c"], places=3)
+        self.assertEqual(sum(v[1] for v in last["m"].values()), last["o"])
+        # Every fixture entry names one model, so attributing each entry's
+        # active time to its most-used model accounts for all of the day.
+        self.assertEqual(sum(v[2] for v in last["m"].values()), last["a"])
         self.assertNotIn("u", last)   # every fixture model has a list rate
+        # Hour buckets are sparse: one per local hour with activity, indexed
+        # from midnight of the first day, carrying the readout fields but not
+        # the cache fields only the daily tiles use.
+        first_o = docs_day.toordinal()
+        expected_hours = set()
+        for _, tl in entries:
+            for m in tl["milestones"]:
+                at = parse_ts(m["ts"])
+                expected_hours.add((at.date().toordinal() - first_o) * 24 + at.hour)
+        self.assertEqual([idx for idx, _ in series["hours"]], sorted(expected_hours))
+        hour_fields = {k for _, h in series["hours"] for k in h}
+        self.assertTrue(hour_fields <= {"s", "i", "a", "o", "c", "m", "p"}, hour_fields)
+        self.assertEqual(sum(h.get("i", 0) for _, h in series["hours"]), first["i"] + last["i"])
+        self.assertEqual(sum(h.get("s", 0) for _, h in series["hours"]), 3)
 
     def test_window_summary_matches_aggregate_statistics(self):
         entries = _fixture_entries()
@@ -141,6 +161,12 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertIn('<time id="uRoDate">Sun · Mar 15, 2026</time>', index_page)
         self.assertIn('<option value="all" selected>all</option>'
                       '<option value="custom" disabled hidden>custom</option>', index_page)
+        # Models and projects each get their own keyed readout line, and the
+        # four-day fixture is short enough for hourly bars.
+        self.assertIn('<div class="uro-line" id="uRo2"><span class="uro-k">models</span>', index_page)
+        self.assertIn('<div class="uro-line" id="uRo3"><span class="uro-k">projects</span>', index_page)
+        self.assertIn('class="interval" data-i="hour" title="windows of 31 days or fewer">hour', index_page)
+        self.assertIn('class="interval on" data-i="day"', index_page)
         # A one-day project window is the same series machinery with no explorer.
         one_day = _daily_series([(None, entries[1][1])], refreshed)
         self.assertEqual(_usage_html(one_day), "")

@@ -105,19 +105,24 @@ expanded API cost details, and session content.
 The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
-The usage explorer above the tiles charts one metric per day: est. API cost,
-tokens out, or agent active time. The toolbar's window select offers `7d`,
-`30d`, and `90d`, which end on the refresh day, and `all`; it reads `custom`
-after any other window. The two dates at the left are inputs, so a click on
-either opens a date picker. The minimap under the chart is a brush: drag inside
-it to move the window, drag a grip to resize it, or drag on an empty part to
-draw a new one. Dragging across the chart itself zooms into the covered days.
+The usage explorer above the tiles charts one metric per hour, day, or week:
+est. API cost, tokens out, or agent active time. The toolbar's window select
+offers `7d`, `30d`, and `90d`, which end on the refresh day, and `all`; it
+reads `custom` after any other window. Hourly bars need a window of 31 days
+or fewer. The y-axis is fixed to the whole history's peak for the chosen
+metric and interval, so moving the window never rescales the bars. The two
+dates at the left are inputs, so a click on either opens a date picker. The
+minimap under the chart is a brush: drag inside it to move the window, drag a
+grip to resize it, or drag on an empty part to draw a new one. Dragging across
+the chart itself zooms into the covered days.
 
-The readout between the toolbar and the chart inspects one day: its cost,
-tokens, active time, inputs, sessions started, and the models and projects
-behind the cost. It follows the pointer, a click pins it to a day, and the
-arrow keys step it while the chart has focus. Without a hover or a pin it shows
-the window's last active day.
+The readout between the toolbar and the chart inspects one bar: its cost,
+tokens, active time, inputs, and sessions started, then the top models and, on
+the index, the top projects by the plotted metric on their own lines. Active
+time is recorded per entry, not per model, so the model line attributes each
+entry's active time to its most-used model. The readout follows the pointer, a
+click pins it to a bar, and the arrow keys step it while the chart has focus.
+Without a hover or a pin it shows the window's last active bar.
 
 The tiles below recompute for the selected window. Two tiles are new: the
 longest streak of consecutive active days, with its dates, and the day with
@@ -334,10 +339,12 @@ heights for agent active time, with output tokens as the fallback when timing
 data is unavailable.
 
 The usage explorer buckets activity by local day, from the first activity
-through the refresh day, so a quiet week shows as empty days. A session counts
-on the day of its first entry. The index mirrors the selected window and metric
-in the URL fragment, for example `#30d`, `#2026-03-01..2026-03-15`, or
-`#7d/act` for agent active time, so a bookmarked fragment reopens that view.
+through the refresh day, so a quiet week shows as empty days, and by local hour
+for the hourly view. A session counts in the day and hour of its first entry.
+Weekly bars start on Mondays and clip to the window. The index mirrors the
+selected window, metric, and interval in the URL fragment, for example `#30d`,
+`#2026-03-01..2026-03-15`, `#7d/act` for agent active time, or `#7d/act/hour`,
+so a bookmarked fragment reopens that view.
 Project pages use the fragment for entry anchors and do not persist their
 window. Without JavaScript the explorer shows the whole history and the
 controls are inert.

@@ -522,6 +522,8 @@ def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
 USAGE_METRICS = (("cost", "est. API cost"), ("tok", "tokens out"),
                  ("act", "agent active time"))
 USAGE_PRESETS = (7, 30, 90)
+USAGE_INTERVALS = ("hour", "day", "week")
+USAGE_MAX_HOURLY_DAYS = 31  # hourly bars need a window of a month or less
 USAGE_MIN_ACTIVE_DAYS = 2   # a one-day history has nothing to explore
 
 
@@ -565,80 +567,107 @@ def _fmt_money(d):
     return f"${d:,.0f}" if d >= 100 else f"${d:.2f}"
 
 
+def _day_hour(ts):
+    """``(day ordinal, hour)`` of a timestamp in local time, or None."""
+    d = parse_ts(ts)
+    return (d.date().toordinal(), d.hour) if d else None
+
+
+def _finish_bucket(b, keys):
+    """Price a bucket's tokens and drop its zero fields for the JSON series.
+
+    ``m`` and ``p`` map a model or project to ``[cost, tokens out, active
+    ms]`` so the readout can split any plotted metric.
+    """
+    _, total, unpriced = pricing.cost_breakdown(b["by_model"])
+    d = {k: b[k] for k in keys if b[k]}
+    if total:
+        d["c"] = round(total, 4)
+    if unpriced:
+        d["u"] = 1
+    by_model = {}
+    for mid, tk in b["by_model"].items():
+        row = [round(pricing.estimate_cost({mid: tk}), 4), tk.get("out", 0), b["ma"].get(mid, 0)]
+        if any(row):
+            by_model[mid] = row
+    if by_model:
+        d["m"] = by_model
+    if b["p"]:
+        d["p"] = {k: [round(v[0], 4), v[1], v[2]] for k, v in b["p"].items()}
+    return d
+
+
 def _daily_series(entries, refreshed):
-    """Dense per-day usage for one or many timelines.
+    """Per-day and per-hour usage for one or many timelines.
 
     ``entries`` is ``[(label, timeline)]``; ``label`` names the project in the
-    per-day ``p`` split and is only used when there is more than one entry.
-    Returns ``{"first": ISO date, "days": [...]}`` covering every local day
-    from the first activity through the refresh day, or None without any
-    dated milestone. A session counts on the day of its first milestone.
+    per-bucket ``p`` split and is only used when there is more than one entry.
+    Returns ``{"first": ISO date, "days": [...], "hours": [...]}`` or None
+    without any dated milestone. ``days`` is dense from the first activity
+    through the refresh day. ``hours`` is sparse: ``[hour index, bucket]``
+    pairs for active hours only, where the index counts hours from midnight
+    of the first day, without the cache fields only the daily tiles need. A
+    session counts in the day and hour of its first milestone.
     """
-    buckets = {}
+    buckets = {}   # (day ordinal, hour or None) -> accumulator
 
-    def day_bucket(o):
-        return buckets.setdefault(o, {
+    def bucket(o, h):
+        return buckets.setdefault((o, h), {
             "s": 0, "i": 0, "a": 0, "o": 0, "ti": 0, "cr": 0, "cw": 0,
-            "by_model": {}, "p": {}})
+            "by_model": {}, "ma": {}, "p": {}})
 
     multi = len(entries) > 1
     for label, tl in entries:
-        first_day = {}
+        first_seen = {}
         for m in tl["milestones"]:
-            o = _day_ordinal(m["ts"])
-            if o is None:
+            when = _day_hour(m["ts"])
+            if when is None:
                 continue
             sid = m["session"]
-            if sid not in first_day or o < first_day[sid]:
-                first_day[sid] = o
+            if sid not in first_seen or when < first_seen[sid]:
+                first_seen[sid] = when
             a = m["activity"]
-            b = day_bucket(o)
-            if m["kind"] in ("prompt", "command", "recovered"):
-                b["i"] += 1
-            b["a"] += a["duration_ms"]
-            b["o"] += a["tokens_out"]
-            b["ti"] += a["tokens_in"]
-            b["cr"] += a["cache_read"]
-            b["cw"] += a["cache_create"]
-            merge_token_models(b["by_model"], a.get("tokens_by_model"))
-            if multi:
-                c = pricing.estimate_cost(a.get("tokens_by_model") or {})
-                if c:
-                    b["p"][label] = b["p"].get(label, 0.0) + c
+            # Active time is recorded per entry, not per model: attribute it to
+            # the entry's most-used model, as the timeline's model chip does.
+            dominant = max(a["models"], key=a["models"].get) if a.get("models") else None
+            cost = pricing.estimate_cost(a.get("tokens_by_model") or {})
+            for b in (bucket(when[0], None), bucket(*when)):
+                if m["kind"] in ("prompt", "command", "recovered"):
+                    b["i"] += 1
+                b["a"] += a["duration_ms"]
+                b["o"] += a["tokens_out"]
+                b["ti"] += a["tokens_in"]
+                b["cr"] += a["cache_read"]
+                b["cw"] += a["cache_create"]
+                merge_token_models(b["by_model"], a.get("tokens_by_model"))
+                if dominant and a["duration_ms"]:
+                    b["ma"][dominant] = b["ma"].get(dominant, 0) + a["duration_ms"]
+                if multi and (cost or a["tokens_out"] or a["duration_ms"]):
+                    row = b["p"].setdefault(label, [0.0, 0, 0])
+                    row[0] += cost
+                    row[1] += a["tokens_out"]
+                    row[2] += a["duration_ms"]
         for session in tl["sessions"]:
             if _is_automated_codex(session):
                 continue
-            o = first_day.get(session["id"])
-            if o is None:
-                o = _day_ordinal(session.get("last_ts"))
-            if o is not None:
-                day_bucket(o)["s"] += 1
+            when = first_seen.get(session["id"])
+            if when is None:
+                when = _day_hour(session.get("last_ts"))
+            if when is not None:
+                bucket(when[0], None)["s"] += 1
+                bucket(*when)["s"] += 1
     if not buckets:
         return None
-    first = min(buckets)
-    last = max(max(buckets), refreshed.date().toordinal())
-    days = []
-    for o in range(first, last + 1):
-        b = buckets.get(o)
-        if b is None:
-            days.append(None)
-            continue
-        _, total, unpriced = pricing.cost_breakdown(b["by_model"])
-        d = {k: b[k] for k in ("s", "i", "a", "o", "ti", "cr", "cw") if b[k]}
-        if total:
-            d["c"] = round(total, 4)
-        if unpriced:
-            d["u"] = 1
-        by_model_cost = {
-            mid: round(pricing.estimate_cost({mid: tk}), 4)
-            for mid, tk in b["by_model"].items()}
-        by_model_cost = {k: v for k, v in by_model_cost.items() if v}
-        if by_model_cost:
-            d["m"] = by_model_cost
-        if b["p"]:
-            d["p"] = {k: round(v, 4) for k, v in b["p"].items()}
-        days.append(d)
-    return {"first": date.fromordinal(first).isoformat(), "days": days}
+    first = min(o for o, _ in buckets)
+    last = max(max(o for o, _ in buckets), refreshed.date().toordinal())
+    days = [
+        _finish_bucket(buckets[(o, None)], ("s", "i", "a", "o", "ti", "cr", "cw"))
+        if (o, None) in buckets else None
+        for o in range(first, last + 1)]
+    hours = [
+        [(o - first) * 24 + h, _finish_bucket(b, ("s", "i", "a", "o"))]
+        for (o, h), b in sorted(kv for kv in buckets.items() if kv[0][1] is not None)]
+    return {"first": date.fromordinal(first).isoformat(), "days": days, "hours": hours}
 
 
 def _series_window(series, a=0, b=None):
@@ -671,8 +700,8 @@ def _series_window(series, a=0, b=None):
         t["u"] = t["u"] or bool(d.get("u"))
         if d.get("a", 0) > t["busy_v"]:
             t["busy_v"], t["busy"] = d["a"], i
-        for mid, c in (d.get("m") or {}).items():
-            t["m"][mid] = t["m"].get(mid, 0) + c
+        for mid, row in (d.get("m") or {}).items():
+            t["m"][mid] = t["m"].get(mid, 0) + row[0]
     return t
 
 
@@ -739,7 +768,7 @@ def _readout_html(series, i):
     d = series["days"][i]
     when = f"{_fmt_dow(first_o + i)} · {_fmt_day(first_o + i)}"
     if not d:
-        line1, line2 = "no activity", ""
+        line1 = "no activity"
     else:
         plus = "+" if d.get("u") else ""
         n_in, n_s = d.get("i", 0), d.get("s", 0)
@@ -747,21 +776,22 @@ def _readout_html(series, i):
                  f'<b>{esc(fmt_num(d.get("o", 0)))}</b> tokens out · '
                  f'<b>{esc(fmt_dur(d.get("a", 0)))}</b> agent active · '
                  f'<b>{n_in}</b> input{_s(n_in)} · <b>{n_s}</b> session{_s(n_s)} started')
-        parts = []
-        for key, model in (("m", True), ("p", False)):
-            items = sorted((d.get(key) or {}).items(), key=lambda kv: -kv[1])
-            if not items:
-                continue
-            bits = [f'{_model_span(k) if model else esc(k)} {esc(_fmt_money(v))}'
-                    for k, v in items[:3]]
-            if len(items) > 3:
-                bits.append(f"+{len(items) - 3} more")
-            parts.append(" · ".join(bits))
-        line2 = " · ".join(parts)
+    lines = [f'<div class="uro-line" id="uRo1">{line1}</div>']
+    multi = any("p" in x for x in series["days"] if x)
+    for key, label, model in (("m", "models", True), ("p", "projects", False)):
+        if key == "p" and not multi:
+            continue
+        items = sorted(((d or {}).get(key) or {}).items(), key=lambda kv: -kv[1][0])
+        items = [(k, v) for k, v in items if v[0]]
+        bits = [f'{_model_span(k) if model else esc(k)} {esc(_fmt_money(v[0]))}'
+                for k, v in items[:3]]
+        if len(items) > 3:
+            bits.append(f"+{len(items) - 3} more")
+        lines.append(f'<div class="uro-line" id="uRo{len(lines) + 1}">'
+                     f'<span class="uro-k">{label}</span>{" · ".join(bits)}</div>')
     return (f'<div class="uro-head"><time id="uRoDate">{esc(when)}</time>'
             '<button type="button" class="ubtn" id="uPin" disabled>unpin</button></div>'
-            f'<div class="uro-line" id="uRo1">{line1}</div>'
-            f'<div class="uro-line" id="uRo2">{line2}</div>')
+            + "".join(lines))
 
 
 def _bars_html(values, vmax, titles=None):
@@ -800,6 +830,11 @@ def _usage_html(series, *, persist=False):
         f'<button type="button" class="metric{" on" if k == "cost" else ""}" '
         f'data-m="{k}">{esc(label)}</button>' for k, label in USAGE_METRICS)
     options = "".join(f'<option value="{p}">{p}d</option>' for p in USAGE_PRESETS)
+    intervals = "".join(
+        f'<button type="button" class="interval{" on" if k == "day" else ""}" data-i="{k}"'
+        f'{" disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""}'
+        f' title="{esc(f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer") if k == "hour" else esc("one bar per " + k)}">'
+        f'{k}</button>' for k in USAGE_INTERVALS)
     step = _tick_step(n)
     ticks = list(range(0, n, step))
     grid = "".join(f'<i style="left:{(i + 0.5) / n * 100:.3f}%"></i>' for i in ticks)
@@ -819,6 +854,7 @@ def _usage_html(series, *, persist=False):
         f'<span class="udays" id="uDays">&middot; {n} day{_s(n)}</span></div>'
         '<div class="uctl">'
         f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
+        f'<div class="seg uint" role="group" aria-label="plotting interval">{intervals}</div>'
         f'<select class="uwin" id="uWin" aria-label="time range">{options}'
         '<option value="all" selected>all</option>'
         '<option value="custom" disabled hidden>custom</option></select></div></div>'
@@ -1219,6 +1255,7 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .seg button:first-child{border-left:0}
 .seg button:hover{color:var(--ink)}
 .seg button.on{background:var(--panel2);color:var(--ink)}
+.seg button:disabled{opacity:.4;cursor:default;color:var(--dim)}
 .seg button:focus-visible{outline:2px solid var(--machine);outline-offset:-2px}
 select.uwin{font:inherit;font-size:11px;height:22px;padding:0 4px 0 8px;color:var(--dim);
   background:var(--panel);border:1px solid var(--line);border-radius:5px;cursor:pointer}
@@ -1236,6 +1273,8 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .ubtn:not(:disabled):hover{color:var(--ink);border-color:var(--machine)}
 .ubtn:focus-visible{outline:2px solid var(--machine);outline-offset:1px}
 .uro-line{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uro-k{display:inline-block;width:64px;font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--faint)}
 .uro b{color:var(--ink);font-weight:600}
 .uro .mdl{color:var(--machine)}
 .uro .mdl.fam-claude{color:var(--claude)}
@@ -1535,15 +1574,15 @@ if(refreshEls.length){
 """
 
 
-# Usage explorer: re-sums the embedded per-day series for the selected window
-# and repaints the chart, brush, readout, and stat tiles. Number formats
-# mirror fmt_num, fmt_dur, fmt_cost, and _fmt_money so a recomputed tile
-# matches the server-rendered one for the same window.
+# Usage explorer: re-buckets the embedded series for the selected window and
+# interval and repaints the chart, brush, readout, and stat tiles. Number
+# formats mirror fmt_num, fmt_dur, fmt_cost, and _fmt_money so a recomputed
+# tile matches the server-rendered one for the same window.
 USAGE_JS = """
 (function(){
 const box=document.getElementById('usage'); if(!box) return;
 const D=JSON.parse(document.getElementById('usageData').textContent);
-const days=D.days, N=days.length, MS=86400000;
+const days=D.days, N=days.length, H=new Map(D.hours||[]), MS=86400000;
 const dayNum=iso=>{const [y,m,d]=iso.split('-').map(Number);return Math.round(Date.UTC(y,m-1,d)/MS);};
 const D0=dayNum(D.first);
 const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1552,12 +1591,13 @@ const dateOf=i=>new Date((D0+i)*MS);
 const isoOf=i=>dateOf(i).toISOString().slice(0,10);
 const fmtDate=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate()+', '+d.getUTCFullYear();};
 const fmtShort=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate();};
+const fmtMonYear=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCFullYear();};
 const fmtDow=i=>DOW[dateOf(i).getUTCDay()];
-const fmtTick=(i,st)=>{const d=dateOf(i);return st>=60?MON[d.getUTCMonth()]+' '+d.getUTCFullYear():fmtShort(i);};
+const pad=h=>String(h).padStart(2,'0');
 const todayIdx=()=>{const t=new Date();return Math.round(Date.UTC(t.getFullYear(),t.getMonth(),t.getDate())/MS)-D0;};
 const clamp=i=>Math.max(0,Math.min(N-1,i));
 const s=n=>n===1?'':'s';
-const DOT=' \\u00b7 ', DASH='\\u2014';
+const DOT=' \\u00b7 ', DASH='\\u2014', RANGE=' \\u2013 ';
 const loc=n=>Math.round(n).toLocaleString('en-US');
 const fmtNum=n=>n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
 const fmtDur=ms=>{if(!ms)return DASH;const sec=ms/1000;if(sec<60)return Math.round(sec)+'s';
@@ -1573,44 +1613,74 @@ const niceMs=ms=>{const min=ms/6e4;if(min<=60){for(const m of [1,2,4,10,20,40,60
 const cleanModel=m=>m.replace(/claude-/g,'');
 const family=m=>{m=m.toLowerCase();if(/^(claude|opus|sonnet|haiku|fable)/.test(m))return 'claude';
   if(/^(gpt|chatgpt|codex|o1|o3|o4)/.test(m))return 'gpt';return '';};
+// col: the column of a model's or project's [cost, tokens out, active ms] split
 const METRIC={
-  cost:{get:d=>d.c||0,nice:nice,axis:axisCost},
-  tok:{get:d=>d.o||0,nice:nice,axis:fmtNum},
-  act:{get:d=>d.a||0,nice:niceMs,axis:axisDur}};
+  cost:{get:d=>d.c||0,nice:nice,axis:axisCost,col:0,fmt:fmtMoney},
+  tok:{get:d=>d.o||0,nice:nice,axis:fmtNum,col:1,fmt:fmtNum},
+  act:{get:d=>d.a||0,nice:niceMs,axis:axisDur,col:2,fmt:fmtDur}};
+const MAX_HOURLY_DAYS=31;
 const $=id=>document.getElementById(id);
 const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), hov=$('uHov'), sel=$('uSel'), vg=$('uVg'), axis=$('uAxis');
 const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
 const yTop=$('uYTop'), yMid=$('uYMid'), daysEl=$('uDays');
 const fromIn=$('uFrom'), toIn=$('uTo'), winSel=$('uWin');
-const roDate=$('uRoDate'), ro1=$('uRo1'), ro2=$('uRo2'), pinBtn=$('uPin');
-const metrics=[...box.querySelectorAll('.metric')];
+const roDate=$('uRoDate'), ro1=$('uRo1'), ro2=$('uRo2'), ro3=$('uRo3'), pinBtn=$('uPin');
+const metrics=[...box.querySelectorAll('.metric')], intervals=[...box.querySelectorAll('.interval')];
 const tiles={}; document.querySelectorAll('.stat[data-k]').forEach(el=>{tiles[el.dataset.k]=el;});
 const persist=box.hasAttribute('data-persist');
-let metric='cost', A=0, B=N-1, hot=-1, pinned=-1;
+let metric='cost', interval='day', A=0, B=N-1, hot=-1, pinned=-1, cur=[];
 bars.querySelectorAll('i[title]').forEach(i=>i.removeAttribute('title'));   // the readout replaces native tooltips
 
+// ---- buckets: {k: key in the interval's index space, d: summed fields or null, from, to: day indices}
+const weekStart=i=>i-((dateOf(i).getUTCDay()+6)%7);               // Monday
+const addRow=(into,k,row)=>{ const r=into[k]||(into[k]=[0,0,0]); row.forEach((v,i)=>{r[i]+=v;}); };
+function merge(t,d){ t.s+=d.s||0; t.i+=d.i||0; t.a+=d.a||0; t.o+=d.o||0; t.c+=d.c||0; if(d.u)t.u=1;
+  for(const k in d.m||{}) addRow(t.m||(t.m={}),k,d.m[k]); for(const k in d.p||{}) addRow(t.p||(t.p={}),k,d.p[k]); return t; }
+function bucketsFor(iv,a,b){
+  const out=[];
+  if(iv==='day'){ for(let i=a;i<=b;i++) out.push({k:i,d:days[i],from:i,to:i}); }
+  else if(iv==='hour'){ for(let h=a*24;h<(b+1)*24;h++) out.push({k:h,d:H.get(h)||null,from:Math.floor(h/24),to:Math.floor(h/24)}); }
+  else { for(let ws=weekStart(a);ws<=b;ws+=7){ let t=null;
+    for(let i=Math.max(a,ws);i<=Math.min(b,ws+6);i++) if(days[i]) t=merge(t||{s:0,i:0,a:0,o:0,c:0},days[i]);
+    out.push({k:ws,d:t,from:Math.max(a,ws),to:Math.min(b,ws+6)}); } }
+  return out;
+}
+// the y scale is locked to the whole history for the metric and interval, so
+// a moving window never rescales the bars
+const scaleCache={};
+function scaleMax(){ const key=metric+'/'+interval; if(!(key in scaleCache)){ const M=METRIC[metric]; let v=0;
+  bucketsFor(interval,0,N-1).forEach(x=>{ if(x.d){const y=M.get(x.d); if(y>v)v=y;} }); scaleCache[key]=M.nice(v); } return scaleCache[key]; }
 const dens=n=>n>240?' packed':n>90?' dense':'';
-function paintBars(el,a,b,M,vmax){
-  const n=b-a+1; let h='';
-  for(let i=a;i<=b;i++){const v=days[i]?M.get(days[i]):0; h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';}
+function paintBars(el,list,M,vmax){
+  const n=list.length; let h='';
+  for(const d of list){const v=d?M.get(d):0; h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';}
   el.className='ubars'+dens(n); el.style.gridTemplateColumns='repeat('+n+',1fr)'; el.innerHTML=h;
 }
-function maxIn(a,b,M){let v=0;for(let i=a;i<=b;i++){if(days[i]){const x=M.get(days[i]);if(x>v)v=x;}}return v;}
 function sumWin(a,b){
   const t={s:0,i:0,a:0,o:0,ti:0,cr:0,cw:0,c:0,u:false,days:0,streak:0,streakStart:-1,busy:-1,busyV:0,m:{}}; let run=0;
   for(let i=a;i<=b;i++){const d=days[i]; if(!d){run=0;continue;}
     run++; if(run>t.streak){t.streak=run;t.streakStart=i-run+1;} t.days++;
     t.s+=d.s||0; t.i+=d.i||0; t.a+=d.a||0; t.o+=d.o||0; t.ti+=d.ti||0; t.cr+=d.cr||0; t.cw+=d.cw||0; t.c+=d.c||0;
     if(d.u)t.u=true; if((d.a||0)>t.busyV){t.busyV=d.a;t.busy=i;}
-    for(const k in (d.m||{}))t.m[k]=(t.m[k]||0)+d.m[k];}
+    for(const k in (d.m||{}))t.m[k]=(t.m[k]||0)+d.m[k][0];}
   return t;
 }
-const tickStep=n=>{for(const st of [1,2,7,14,30,60,90,180,365]) if(n/st<=8) return st; return 365*Math.ceil(n/8/365);};
+// ---- axis ticks: at most eight, anchored to midnight for hours and to the window start otherwise
+const stepFrom=(steps,n)=>steps.find(st=>n/st<=8)||steps[steps.length-1]*Math.ceil(n/8/steps[steps.length-1]);
+function ticks(){
+  const n=cur.length, out=[];
+  if(interval==='hour'){ const st=stepFrom([1,2,3,6,12,24,48,72,168,336],n);
+    cur.forEach((x,j)=>{ if(x.k%st===0) out.push([j,x.k%24===0?fmtShort(x.from):pad(x.k%24)+':00']); }); }
+  else if(interval==='week'){ const st=stepFrom([1,2,4,8,13,26,52],n);
+    for(let j=0;j<n;j+=st) out.push([j,st>=26?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
+  else { const st=stepFrom([1,2,7,14,30,60,90,180,365],n);
+    for(let j=0;j<n;j+=st) out.push([j,st>=60?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
+  return out;
+}
 function paintAxis(){
-  const n=B-A+1, st=tickStep(n); let g='', l='';
-  for(let i=0;i<n;i+=st){const x=((i+0.5)/n*100).toFixed(3)+'%'; g+='<i style="left:'+x+'"></i>'; l+='<span style="left:'+x+'"></span>';}
-  vg.innerHTML=g; axis.innerHTML=l;
-  let k=0; for(let i=0;i<n;i+=st) axis.children[k++].textContent=fmtTick(A+i,st);
+  const n=cur.length, t=ticks(); let g='', l='';
+  t.forEach(([j])=>{const x=((j+0.5)/n*100).toFixed(3)+'%'; g+='<i style="left:'+x+'"></i>'; l+='<span style="left:'+x+'"></span>';});
+  vg.innerHTML=g; axis.innerHTML=l; t.forEach(([,label],k)=>{axis.children[k].textContent=label;});
 }
 function el(tag,cls,text){const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e;}
 function pairs(target,list){ list.forEach(([v,l],k)=>{ if(k) target.appendChild(document.createTextNode(DOT));
@@ -1628,38 +1698,40 @@ function paintTiles(){
   setTile('cost',fmtCost(w.c)+plus,null,pt?[Math.round(w.cr/pt*100)+'%','cache hit rate']:DASH);
   if(tiles.cost) tiles.cost.title=Object.entries(w.m).sort((x,y)=>y[1]-x[1]).map(([k,v])=>cleanModel(k)+' '+fmtCost(v)).join(DOT);
   const st=w.streakStart, en=st+w.streak-1;
-  setTile('streak',w.streak+' day'+s(w.streak),null,!w.streak?DASH:w.streak===1?fmtShort(st):fmtShort(st)+' \\u2013 '+fmtShort(en));
+  setTile('streak',w.streak+' day'+s(w.streak),null,!w.streak?DASH:w.streak===1?fmtShort(st):fmtShort(st)+RANGE+fmtShort(en));
   setTile('busiest',w.busy>=0?fmtDur(w.busyV):DASH,null,w.busy>=0?fmtDow(w.busy)+DOT+fmtShort(w.busy):DASH);
 }
-// ---- day readout: hovered day, else the pinned one, else the window's last active day
-function defaultDay(){ for(let i=B;i>=A;i--) if(days[i]) return i; return B; }
-function paintReadout(gi){
-  const d=days[gi]; roDate.textContent=fmtDow(gi)+DOT+fmtDate(gi);
-  ro1.textContent=''; ro2.textContent='';
+// ---- readout: the hovered bucket, else the pinned one, else the window's last active bucket
+function head(x){
+  if(interval==='hour'){ const h=x.k%24; return fmtDow(x.from)+DOT+fmtDate(x.from)+DOT+pad(h)+':00'+'\\u2013'+pad((h+1)%24)+':00'; }
+  if(interval==='week') return fmtShort(x.from)+RANGE+fmtDate(x.to);
+  return fmtDow(x.k)+DOT+fmtDate(x.k);
+}
+function split(target,obj,model){ const key=target.firstChild, M=METRIC[metric]; target.textContent=''; target.appendChild(key);
+  const items=Object.entries(obj||{}).map(([k,row])=>[k,row[M.col]]).filter(([,v])=>v>0).sort((x,y)=>y[1]-x[1]);
+  items.slice(0,3).forEach(([k,v],i)=>{ if(i) target.appendChild(document.createTextNode(DOT));
+    target.appendChild(el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k));
+    target.appendChild(document.createTextNode(' '+M.fmt(v))); });
+  if(items.length>3) target.appendChild(document.createTextNode(DOT+'+'+(items.length-3)+' more')); }
+function lastActive(){ for(let j=cur.length-1;j>=0;j--) if(cur[j].d) return j; return cur.length-1; }
+function paintReadout(j){
+  const x=cur[j], d=x.d; roDate.textContent=head(x); ro1.textContent='';
   if(!d) ro1.textContent='no activity';
-  else{
-    pairs(ro1,[[fmtMoney(d.c||0)+(d.u?'+':''),'est. API cost'],[fmtNum(d.o||0),'tokens out'],[fmtDur(d.a||0),'agent active'],
-      [String(d.i||0),'input'+s(d.i||0)],[String(d.s||0),'session'+s(d.s||0)+' started']]);
-    let first=true;
-    for(const [key,model] of [['m',true],['p',false]]){
-      const items=Object.entries(d[key]||{}).sort((x,y)=>y[1]-x[1]); if(!items.length) continue;
-      items.slice(0,3).forEach(([k,v])=>{ if(!first) ro2.appendChild(document.createTextNode(DOT)); first=false;
-        ro2.appendChild(el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k));
-        ro2.appendChild(document.createTextNode(' '+fmtMoney(v))); });
-      if(items.length>3) ro2.appendChild(document.createTextNode(DOT+'+'+(items.length-3)+' more'));
-    }
-  }
+  else pairs(ro1,[[fmtMoney(d.c||0)+(d.u?'+':''),'est. API cost'],[fmtNum(d.o||0),'tokens out'],[fmtDur(d.a||0),'agent active'],
+    [String(d.i||0),'input'+s(d.i||0)],[String(d.s||0),'session'+s(d.s||0)+' started']]);
+  if(ro2) split(ro2,d&&d.m,true); if(ro3) split(ro3,d&&d.p,false);
   pinBtn.disabled=pinned<0;
 }
-function mark(){ [...bars.children].forEach((b,i)=>b.classList.toggle('pin',A+i===pinned)); }
-function setPin(gi){ pinned=gi; mark(); paintReadout(pinned>=0?pinned:defaultDay()); }
-function showDay(i){
-  if(hot!==i){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=i; bars.children[i].classList.add('hot'); }
-  const n=B-A+1; hov.hidden=false; hov.style.left=(i/n*100)+'%'; hov.style.width=(100/n)+'%';
-  paintReadout(A+i);
+const pinIdx=()=>cur.findIndex(x=>x.k===pinned);
+function mark(){ const j=pinIdx(); [...bars.children].forEach((b,i)=>b.classList.toggle('pin',i===j)); }
+function setPin(key){ pinned=key; const j=pinIdx(); if(j<0) pinned=-1; mark(); paintReadout(j>=0?j:lastActive()); }
+function showBucket(j){
+  if(hot!==j){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=j; bars.children[j].classList.add('hot'); }
+  const n=cur.length; hov.hidden=false; hov.style.left=(j/n*100)+'%'; hov.style.width=(100/n)+'%';
+  paintReadout(j);
 }
 function leave(){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=-1; hov.hidden=true;
-  paintReadout(pinned>=0?pinned:defaultDay()); }
+  const j=pinIdx(); paintReadout(j>=0?j:lastActive()); }
 
 function presetOf(){                        // which preset the window equals, if any
   if(A===0&&B===N-1) return 'all';
@@ -1668,30 +1740,35 @@ function presetOf(){                        // which preset the window equals, i
   return null;
 }
 function render(){
-  const M=METRIC[metric], n=B-A+1, top=M.nice(maxIn(A,B,M));
-  paintBars(bars,A,B,M,top); hot=-1; hov.hidden=true;
+  const M=METRIC[metric], n=B-A+1;
+  const hourly=intervals.find(b=>b.dataset.i==='hour'); if(hourly){ hourly.disabled=n>MAX_HOURLY_DAYS;
+    if(hourly.disabled&&interval==='hour'){ interval='day'; pinned=-1; intervals.forEach(b=>b.classList.toggle('on',b.dataset.i==='day')); } }
+  cur=bucketsFor(interval,A,B); const top=scaleMax();
+  paintBars(bars,cur.map(x=>x.d),M,top); hot=-1; hov.hidden=true;
   yTop.textContent=M.axis(top); yMid.textContent=M.axis(top/2);
   daysEl.textContent='\\u00b7 '+n+' day'+s(n);
   brush.style.left=(A/N*100)+'%'; brush.style.width=(n/N*100)+'%';
   winSel.value=presetOf()||'custom';
   fromIn.value=isoOf(A); toIn.value=isoOf(B);
-  paintAxis(); paintTiles();
-  if(pinned<A||pinned>B) pinned=-1;
-  setPin(pinned);
+  paintAxis(); paintTiles(); setPin(pinned);
 }
-function renderMini(){ const M=METRIC[metric]; paintBars(mbars,0,N-1,M,maxIn(0,N-1,M)); }
+function renderMini(){ paintBars(mbars,days,METRIC[metric],scaleMaxDaily()); }
+function scaleMaxDaily(){ const M=METRIC[metric]; let v=0; days.forEach(d=>{ if(d){const y=M.get(d); if(y>v)v=y;} }); return v; }
 function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
 function syncUrl(){ if(!persist) return;
   const p=presetOf(); const r=p==='all'?'':p?p+'d':isoOf(A)+'..'+isoOf(B);
-  const h=(r||metric!=='cost')?'#'+r+(metric!=='cost'?'/'+metric:''):'';
+  const tail=(metric!=='cost'?'/'+metric:'')+(interval!=='day'?'/'+interval:'');
+  const h=(r||tail)?'#'+r+tail:'';
   if(h!==location.hash) history.replaceState(null,'',location.pathname+location.search+h);
 }
 function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1); else setWin(t-(+p)+1,t); }
 function setMetric(k){ if(k===metric) return; metric=k;
   metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
-function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..2026-03-15", "#7d/act"
-  const m=/^#?([^/]*)(?:\\/(cost|tok|act))?$/.exec(location.hash)||[];
-  setMetric(m[2]||'cost');
+function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1;
+  intervals.forEach(b=>b.classList.toggle('on',b.dataset.i===k)); render(); }
+function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..2026-03-15", "#7d/act/hour"
+  const m=/^#?([^/]*)(?:\\/(cost|tok|act))?(?:\\/(hour|day|week))?$/.exec(location.hash)||[];
+  setMetric(m[2]||'cost'); setIntervalMode(m[3]||'day');
   const r=m[1]||'', pd=/^(\\d+)d$/.exec(r), cd=/^(\\d{4}-\\d{2}-\\d{2})\\.\\.(\\d{4}-\\d{2}-\\d{2})$/.exec(r);
   if(pd) applyPreset(pd[1]); else if(cd) setWin(dayNum(cd[1])-D0,dayNum(cd[2])-D0); else applyPreset('all');
 }
@@ -1700,6 +1777,7 @@ function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..202
 winSel.addEventListener('change',()=>{ if(winSel.value==='custom') return;
   applyPreset(winSel.value); winSel.value=presetOf()||'custom'; syncUrl(); });   // "7d" may already be "all"
 metrics.forEach(b=>b.addEventListener('click',()=>{setMetric(b.dataset.m); syncUrl();}));
+intervals.forEach(b=>b.addEventListener('click',()=>{ if(!b.disabled){setIntervalMode(b.dataset.i); syncUrl();} }));
 // a from-date past the to-date pulls the to-date along (and the reverse), never swaps them
 const onDate=e=>{ if(!fromIn.value||!toIn.value) return;
   let a=dayNum(fromIn.value)-D0, b=dayNum(toIn.value)-D0;
@@ -1733,34 +1811,35 @@ mini.addEventListener('pointermove',e=>{ if(!mode) return;
 const endBrush=()=>{ if(mode){mode=null; syncUrl();} };
 mini.addEventListener('pointerup',endBrush); mini.addEventListener('pointercancel',endBrush);
 
-// ---- main chart: hover to inspect a day, click to pin it, drag across days to zoom in
+// ---- main chart: hover to inspect a bucket, click to pin it, drag across buckets to zoom in
 let drag=null;
-const colAt=x=>{const r=bars.getBoundingClientRect(), n=B-A+1; return Math.max(0,Math.min(n-1,Math.floor((x-r.left)/r.width*n)));};
+const colAt=x=>{const r=bars.getBoundingClientRect(), n=cur.length; return Math.max(0,Math.min(n-1,Math.floor((x-r.left)/r.width*n)));};
 plot.addEventListener('pointerdown',e=>{ drag={x0:e.clientX,moved:false}; plot.setPointerCapture(e.pointerId); });
 plot.addEventListener('pointermove',e=>{
-  const i=colAt(e.clientX);
+  const j=colAt(e.clientX);
   if(drag){ if(Math.abs(e.clientX-drag.x0)>4) drag.moved=true;
-    if(drag.moved){ const n=B-A+1, j=colAt(drag.x0), a=Math.min(i,j), b=Math.max(i,j);
+    if(drag.moved){ const n=cur.length, i=colAt(drag.x0), a=Math.min(i,j), b=Math.max(i,j);
       sel.hidden=false; sel.style.left=(a/n*100)+'%'; sel.style.width=((b-a+1)/n*100)+'%';
       if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=-1; hov.hidden=true; return; } }
-  showDay(i);
+  showBucket(j);
 });
 plot.addEventListener('pointerup',e=>{
-  const i=colAt(e.clientX);
-  if(drag&&drag.moved){ const j=colAt(drag.x0); const a=A+Math.min(i,j), b=A+Math.max(i,j); drag=null; sel.hidden=true;
-    setWin(a,b); syncUrl(); showDay(colAt(e.clientX)); return; }   // the pointer is still over the (new) plot
-  if(drag){ const gi=A+i; setPin(pinned===gi?-1:gi); }
+  const j=colAt(e.clientX);
+  if(drag&&drag.moved){ const i=colAt(drag.x0), a=cur[Math.min(i,j)].from, b=cur[Math.max(i,j)].to; drag=null; sel.hidden=true;
+    setWin(a,b); syncUrl(); showBucket(colAt(e.clientX)); return; }   // the pointer is still over the (new) plot
+  if(drag){ const key=cur[j].k; setPin(pinned===key?-1:key); }
   drag=null; sel.hidden=true;
 });
 plot.addEventListener('pointercancel',()=>{drag=null; sel.hidden=true;});
 plot.addEventListener('pointerleave',()=>{ if(!drag) leave(); });
 plot.addEventListener('keydown',e=>{
-  const cur=pinned>=0?pinned:defaultDay(); let gi;
-  if(e.key==='ArrowLeft') gi=Math.max(A,cur-1); else if(e.key==='ArrowRight') gi=Math.min(B,cur+1);
-  else if(e.key==='Home') gi=A; else if(e.key==='End') gi=B;
-  else if(e.key==='Escape') gi=-1; else return;
-  e.preventDefault(); setPin(gi);
+  const at=pinIdx(), c=at>=0?at:lastActive(); let j;
+  if(e.key==='ArrowLeft') j=Math.max(0,c-1); else if(e.key==='ArrowRight') j=Math.min(cur.length-1,c+1);
+  else if(e.key==='Home') j=0; else if(e.key==='End') j=cur.length-1;
+  else if(e.key==='Escape') j=-1; else return;
+  e.preventDefault(); setPin(j>=0?cur[j].k:-1);
 });
+cur=bucketsFor('day',A,B);
 readUrl();
 })();
 """
