@@ -106,19 +106,23 @@ The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
 The usage explorer above the tiles charts one metric per hour, day, or week:
-est. API cost, tokens out, or agent active time. The toolbar's window select
-offers `7d`, `30d`, and `90d`, which end on the refresh day, and `all`; it
-reads `custom` after any other window. Hourly bars need a window of 31 days
-or fewer. The y-axis is fixed to the whole history's peak for the chosen
-metric and interval, so moving the window never rescales the bars. The two
-dates at the left are inputs, so a click on either opens a date picker. The
-minimap under the chart is a brush: drag inside it to move the window, drag a
-grip to resize it, or drag on an empty part to draw a new one. Dragging across
-the chart itself zooms into the covered days.
+est. API cost, tokens out, or agent active time, chosen on the left of the
+toolbar. The interval control on the right starts on `auto`, which plots
+hours for a window of a week or less, days up to 26 weeks, and weeks beyond,
+and underlines the interval in effect; `hour`, `day`, and `week` fix it, and
+hourly bars need a window of 31 days or fewer. The window select offers `7d`,
+`30d`, and `90d`, which end on the refresh day, and `all`; it reads `custom`
+after any other window. The two dates beside it are inputs, so a click on
+either opens a date picker. The y-axis is fixed to the whole history's peak
+for the chosen metric and interval, so moving the window never rescales the
+bars. The minimap under the chart is a brush: drag inside it to move the
+window, drag a grip to resize it, or drag on an empty part to draw a new one.
+Dragging across the chart itself zooms into the covered days.
 
 The readout between the toolbar and the chart inspects one bar: its cost,
 tokens, active time, inputs, and sessions started, then the top models and, on
-the index, the top projects by the plotted metric on their own lines. Active
+the index, the top projects by the plotted metric on their own lines, in
+fixed-width cells so a metric switch changes the numbers in place. Active
 time is recorded per entry, not per model, so the model line attributes each
 entry's active time to its most-used model. The readout follows the pointer, a
 click pins it to a bar, and the arrow keys step it while the chart has focus.
@@ -347,14 +351,18 @@ it started. The span is the entry's recorded active duration, so an idle gap
 inside one entry, such as a wait for approval, is not modeled. Inputs count in
 the starting hour, and a session counts in the day and hour of its first
 entry. Weekly bars start on Mondays and clip to the
-window. The minimap shows the whole history by day, or by week in the weekly
-view. The index mirrors the
-selected window, metric, and interval in the URL fragment, for example `#30d`,
-`#2026-03-01..2026-03-15`, `#7d/act` for agent active time, or `#7d/act/hour`,
-so a bookmarked fragment reopens that view.
-Project pages use the fragment for entry anchors and do not persist their
-window. Without JavaScript the explorer shows the whole history and the
-controls are inert.
+window. The minimap shows the whole history at the plotted interval, folded
+into at most one bar per two pixels, each showing its bin's peak, so a long
+history of hours reads as a density strip. Every page with an explorer
+mirrors its view in the URL's query string as separate fields, with defaults
+omitted: `?range=30d` or `?from=2026-03-01&to=2026-03-15` for the window,
+`metric=tok` or `metric=act` for tokens out or agent active time, and
+`interval=hour`, `interval=day`, or `interval=week`. A bookmarked URL such as
+`index.html?range=7d&metric=act&interval=hour` reopens that view, and the
+fragment still addresses entries on project pages. The page rewrites the
+query in place without reloading; a browser that refuses to do that for a
+`file://` URL gets the same fields in the fragment. Without JavaScript the
+explorer shows the whole history and the controls are inert.
 
 The generator renders timestamps in the local timezone of the machine that
 runs it. Transcript timestamps are stored in UTC.

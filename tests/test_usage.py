@@ -6,9 +6,10 @@ from datetime import date, timedelta
 
 from ccx_parse import _add_tokens, _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
-from generate_site import (_axis_cost, _daily_series, _merge_timelines, _nice,
-                           _series_window, _tick_step, _tile_details, _usage_html,
-                           parse_ts, render, render_index)
+from generate_site import (_auto_interval, _axis_cost, _binned, _buckets,
+                           _daily_series, _merge_timelines, _nice, _series_window,
+                           _step_from, _tile_details, _usage_html, parse_ts, render,
+                           render_index)
 
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
@@ -148,6 +149,25 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertEqual((window["o"], window["a"], window["i"], window["s"]),
                          (3000, 5_400_000, 1, 1))
 
+    def test_buckets_by_hour_and_by_monday_week(self):
+        entries = _fixture_entries()
+        refreshed = parse_ts(max(tl["stats"]["last_ts"] for _, tl in entries))
+        series = _daily_series(entries, refreshed)
+
+        hours = _buckets(series, "hour")
+        weeks = _buckets(series, "week")
+
+        # Four days give 96 hourly bars, active only where the hours list is,
+        # and one Monday-based week clipped to the four fixture days.
+        self.assertEqual(len(hours), 96)
+        self.assertEqual([h for h, d, _, _ in hours if d], [idx for idx, _ in series["hours"]])
+        self.assertEqual(len(weeks), 1)
+        _, week, frm, to = weeks[0]
+        self.assertEqual((frm, to), (0, 3))
+        window = _series_window(series)
+        self.assertEqual((week["s"], week["i"], week["o"]), (window["s"], window["i"], window["o"]))
+        self.assertAlmostEqual(week["c"], window["c"], places=3)
+
     def test_window_summary_streak_and_busiest_day(self):
         # Three consecutive active days form the streak; the fourth active day
         # is isolated. The busiest day is the one with the most active time.
@@ -176,10 +196,17 @@ class UsageSeriesTests(unittest.TestCase):
         # At most eight ticks: daily up to 8 days, weekly up to 8 weeks, then
         # monthly steps; 3000 days would show more than eight yearly ticks, so
         # the step doubles to two years.
-        self.assertEqual([_tick_step(n) for n in (4, 8, 9, 30, 56, 57, 204, 3000)],
+        day_steps = (1, 2, 7, 14, 30, 60, 90, 180, 365)
+        self.assertEqual([_step_from(day_steps, n) for n in (4, 8, 9, 30, 56, 57, 204, 3000)],
                          [1, 1, 2, 7, 7, 14, 30, 730])
+        # "auto" plots hours up to a week, days up to 26 weeks, then weeks.
+        self.assertEqual([_auto_interval(n) for n in (1, 7, 8, 182, 183)],
+                         ["hour", "hour", "day", "day", "week"])
+        # A minimap folds 1,000 values into at most 360 bins of their peak.
+        self.assertEqual(_binned([1, 5, 2, 9], 2), [5, 9])
+        self.assertEqual(len(_binned(list(range(1000)), 360)), 334)
 
-    def test_explorer_needs_two_active_days_and_only_the_index_persists(self):
+    def test_explorer_needs_two_active_days(self):
         entries = _fixture_entries()
         refreshed = parse_ts(max(tl["stats"]["last_ts"] for _, tl in entries))
 
@@ -194,20 +221,29 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertIn('data-k="streak"', project_page)
         self.assertIn("busiest day", project_page)
         self.assertIn("<b>$5.88</b> per active hour", project_page)
-        # The index spans two active days and mirrors its window in the URL.
-        self.assertIn('<section class="usage" id="usage" data-persist>', index_page)
+        # The index spans two active days, so it gets the explorer.
+        self.assertIn('<section class="usage" id="usage">', index_page)
         self.assertIn('id="usageData">{"first":', index_page)
-        # The static readout inspects the last active day; the window select
-        # starts on "all" with a hidden "custom" entry for brushed windows.
-        self.assertIn('<time id="uRoDate">Sun · Mar 15, 2026</time>', index_page)
+        # A four-day history plots hourly under "auto": 96 bars, ticks every
+        # twelve hours, and the readout resting on the last active hour. The
+        # window select starts on "all" with a hidden "custom" entry.
+        self.assertIn('style="grid-template-columns:repeat(96,1fr)"', index_page)
+        self.assertIn('<time id="uRoDate">Sun · Mar 15, 2026 · 10:00–11:00</time>', index_page)
+        self.assertIn('>Mar 12</span>', index_page)
+        self.assertIn('>12:00</span>', index_page)
         self.assertIn('<option value="all" selected>all</option>'
                       '<option value="custom" disabled hidden>custom</option>', index_page)
-        # Models and projects each get their own keyed readout line, and the
-        # four-day fixture is short enough for hourly bars.
-        self.assertIn('<div class="uro-line" id="uRo2"><span class="uro-k">models</span>', index_page)
-        self.assertIn('<div class="uro-line" id="uRo3"><span class="uro-k">projects</span>', index_page)
-        self.assertIn('class="interval" data-i="hour" title="windows of 31 days or fewer">hour', index_page)
-        self.assertIn('class="interval on" data-i="day"', index_page)
+        self.assertIn('class="interval on" data-i="auto"', index_page)
+        self.assertIn('class="interval eff" data-i="hour"', index_page)
+        # Models and projects each get their own keyed readout line of
+        # fixed-width cells.
+        self.assertIn('<div class="uro-line" id="uRo2"><span class="uro-k">models</span>'
+                      '<span class="ui"><span class="mdl fam-gpt">gpt-5.6-sol</span>'
+                      '<span>$0.72</span></span>', index_page)
+        # The project cell adds the four minutes of the /review entry that ran
+        # past ten o'clock to the Codex session's $0.72, so it is matched loosely.
+        self.assertRegex(index_page, r'<div class="uro-line" id="uRo3"><span class="uro-k">projects</span>'
+                                     r'<span class="ui"><span>example-project</span><span>\$\d\.\d\d</span></span>')
         # A one-day project window is the same series machinery with no explorer.
         one_day = _daily_series([(None, entries[1][1])], refreshed)
         self.assertEqual(_usage_html(one_day), "")

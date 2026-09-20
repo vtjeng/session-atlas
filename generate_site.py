@@ -522,8 +522,11 @@ def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
 USAGE_METRICS = (("cost", "est. API cost"), ("tok", "tokens out"),
                  ("act", "agent active time"))
 USAGE_PRESETS = (7, 30, 90)
-USAGE_INTERVALS = ("hour", "day", "week")
+USAGE_INTERVALS = ("auto", "hour", "day", "week")
 USAGE_MAX_HOURLY_DAYS = 31  # hourly bars need a window of a month or less
+USAGE_AUTO_HOUR_MAX_DAYS = 7    # "auto": hourly up to a week ...
+USAGE_AUTO_DAY_MAX_DAYS = 182   # ... daily up to 26 weeks, weekly beyond
+USAGE_MINI_MAX_BARS = 360   # the static minimap folds a longer history into bins
 USAGE_MIN_ACTIVE_DAYS = 2   # a one-day history has nothing to explore
 
 
@@ -783,20 +786,91 @@ def _tile_details(series, w, a=0, b=None):
     }
 
 
-def _tick_step(n):
-    """Days between x-axis ticks so a window shows at most eight of them."""
-    for step in (1, 2, 7, 14, 30, 60, 90, 180, 365):
-        if n / step <= 8:
-            return step
-    return 365 * math.ceil(n / 8 / 365)
+def _auto_interval(n_days):
+    """The interval the ``auto`` setting picks for a window of ``n_days``."""
+    if n_days <= USAGE_AUTO_HOUR_MAX_DAYS:
+        return "hour"
+    if n_days <= USAGE_AUTO_DAY_MAX_DAYS:
+        return "day"
+    return "week"
+
+
+def _merge_bucket(t, d):
+    """Add bucket ``d`` into accumulator ``t`` (the client's ``merge``)."""
+    for k in ("s", "i", "a", "o", "c"):
+        t[k] = t.get(k, 0) + d.get(k, 0)
+    if d.get("u"):
+        t["u"] = 1
+    for key in ("m", "p"):
+        for name, row in (d.get(key) or {}).items():
+            acc = t.setdefault(key, {}).setdefault(name, [0, 0, 0])
+            for n, v in enumerate(row):
+                acc[n] += v
+    return t
+
+
+def _buckets(series, interval, a=0, b=None):
+    """Bars for days ``a..b`` at ``interval``: ``(key, bucket, from, to)``
+    tuples where ``bucket`` is None when idle and ``from``/``to`` are day
+    indices. Mirrors the client's ``bucketsFor``."""
+    days = series["days"]
+    if b is None:
+        b = len(days) - 1
+    if interval == "day":
+        return [(i, days[i], i, i) for i in range(a, b + 1)]
+    if interval == "hour":
+        by_hour = dict(series["hours"])
+        return [(h, by_hour.get(h), h // 24, h // 24) for h in range(a * 24, (b + 1) * 24)]
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    out = []
+    ws = a - date.fromordinal(first_o + a).weekday()   # Monday
+    while ws <= b:
+        lo, hi = max(a, ws), min(b, ws + 6)
+        t = None
+        for i in range(lo, hi + 1):
+            if days[i]:
+                t = _merge_bucket(t or {}, days[i])
+        out.append((ws, t, lo, hi))
+        ws += 7
+    return out
+
+
+def _binned(values, max_bins):
+    """At most ``max_bins`` bars: a longer series folds into bins of its peak."""
+    if len(values) <= max_bins:
+        return values
+    g = math.ceil(len(values) / max_bins)
+    return [max(values[i:i + g]) for i in range(0, len(values), g)]
+
+
+def _step_from(steps, n):
+    """The first step that leaves at most eight ticks over ``n`` buckets."""
+    for st in steps:
+        if n / st <= 8:
+            return st
+    return steps[-1] * math.ceil(n / 8 / steps[-1])
+
+
+def _ticks(series, interval, buckets):
+    """``[(bucket index, label)]`` axis ticks, anchored to midnight for hours
+    and to the window start otherwise. Mirrors the client's ``ticks``."""
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    n = len(buckets)
+    if interval == "hour":
+        st = _step_from((1, 2, 3, 6, 12, 24, 48, 72, 168, 336), n)
+        return [(j, _fmt_day_short(first_o + frm) if key % 24 == 0 else f"{key % 24:02d}:00")
+                for j, (key, _, frm, _) in enumerate(buckets) if key % st == 0]
+    if interval == "week":
+        st = _step_from((1, 2, 4, 8, 13, 26, 52), n)
+    else:
+        st = _step_from((1, 2, 7, 14, 30, 60, 90, 180, 365), n)
+    fmt = "%b %Y" if st >= (26 if interval == "week" else 60) else "%b %-d"
+    return [(j, date.fromordinal(first_o + buckets[j][0]).strftime(fmt))
+            for j in range(0, n, st)]
 
 
 def _fmt_dow(o):
     return date.fromordinal(o).strftime("%a")
-
-
-def _fmt_tick(o, step):
-    return date.fromordinal(o).strftime("%b %Y" if step >= 60 else "%b %-d")
 
 
 def _model_span(mid):
@@ -805,11 +879,23 @@ def _model_span(mid):
     return f'<span class="{cls}">{esc(clean_model(mid))}</span>'
 
 
-def _readout_html(series, i):
-    """The inspection row for one day: date, totals, and the cost split."""
+def _readout_head(series, interval, bucket):
     first_o = date.fromisoformat(series["first"]).toordinal()
-    d = series["days"][i]
-    when = f"{_fmt_dow(first_o + i)} · {_fmt_day(first_o + i)}"
+    key, _, frm, to = bucket
+    if interval == "hour":
+        h = key % 24
+        return (f"{_fmt_dow(first_o + frm)} · {_fmt_day(first_o + frm)} · "
+                f"{h:02d}:00–{(h + 1) % 24:02d}:00")
+    if interval == "week":
+        return f"{_fmt_day_short(first_o + frm)} – {_fmt_day(first_o + to)}"
+    return f"{_fmt_dow(first_o + key)} · {_fmt_day(first_o + key)}"
+
+
+def _readout_html(series, interval, bucket):
+    """The inspection row for one bar: its totals, then the top models and,
+    on a multi-project series, the top projects by cost in fixed-width cells
+    so a metric switch changes the numbers in place."""
+    d = bucket[1]
     if not d:
         line1 = "no activity"
     else:
@@ -826,13 +912,13 @@ def _readout_html(series, i):
             continue
         items = sorted(((d or {}).get(key) or {}).items(), key=lambda kv: -kv[1][0])
         items = [(k, v) for k, v in items if v[0]]
-        bits = [f'{_model_span(k) if model else esc(k)} {esc(_fmt_money(v[0]))}'
-                for k, v in items[:3]]
+        cells = [f'<span class="ui">{_model_span(k) if model else f"<span>{esc(k)}</span>"}'
+                 f'<span>{esc(_fmt_money(v[0]))}</span></span>' for k, v in items[:3]]
         if len(items) > 3:
-            bits.append(f"+{len(items) - 3} more")
+            cells.append(f"<span>+{len(items) - 3} more</span>")
         lines.append(f'<div class="uro-line" id="uRo{len(lines) + 1}">'
-                     f'<span class="uro-k">{label}</span>{" · ".join(bits)}</div>')
-    return (f'<div class="uro-head"><time id="uRoDate">{esc(when)}</time>'
+                     f'<span class="uro-k">{label}</span>{"".join(cells)}</div>')
+    return (f'<div class="uro-head"><time id="uRoDate">{esc(_readout_head(series, interval, bucket))}</time>'
             '<button type="button" class="ubtn" id="uPin" disabled>unpin</button></div>'
             + "".join(lines))
 
@@ -850,74 +936,78 @@ def _bars_html(values, vmax, titles=None):
             f'{"".join(bars)}</div>')
 
 
-def _usage_html(series, *, persist=False):
+def _usage_html(series):
     """The hero's usage explorer, rendered for the whole series with the cost
-    metric; ``USAGE_JS`` takes over for windowing, other metrics, and hover.
-
-    ``persist`` makes the client mirror its window in the URL fragment, which
-    only the index can afford: project pages use the fragment for entries.
+    metric at the interval ``auto`` picks for it; ``USAGE_JS`` takes over for
+    windowing, other metrics and intervals, and hover, and mirrors the view
+    in the URL's query string.
     """
     days = series["days"]
     if sum(1 for d in days if d is not None) < USAGE_MIN_ACTIVE_DAYS:
         return ""
     n = len(days)
     first_o = date.fromisoformat(series["first"]).toordinal()
-    vals = [d.get("c", 0) if d else 0 for d in days]
-    vmax = max(vals)
-    top = _nice(vmax)
-    titles = [
-        f'{_fmt_day(first_o + i)} · '
-        f'{_fmt_money(v) + " est. API cost" if d else "no activity"}'
-        for i, (d, v) in enumerate(zip(days, vals))]
+    interval = _auto_interval(n)
+    buckets = _buckets(series, interval)
+    vals = [d.get("c", 0) if d else 0 for _, d, _, _ in buckets]
+    top = _nice(max(vals))
+    titles = [f'{_readout_head(series, interval, bk)} · '
+              f'{_fmt_money(v) + " est. API cost" if bk[1] else "no activity"}'
+              for bk, v in zip(buckets, vals)]
     metrics = "".join(
         f'<button type="button" class="metric{" on" if k == "cost" else ""}" '
         f'data-m="{k}">{esc(label)}</button>' for k, label in USAGE_METRICS)
     options = "".join(f'<option value="{p}">{p}d</option>' for p in USAGE_PRESETS)
-    intervals = "".join(
-        f'<button type="button" class="interval{" on" if k == "day" else ""}" data-i="{k}"'
-        f'{" disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""}'
-        f' title="{esc(f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer") if k == "hour" else esc("one bar per " + k)}">'
-        f'{k}</button>' for k in USAGE_INTERVALS)
-    step = _tick_step(n)
-    ticks = list(range(0, n, step))
-    grid = "".join(f'<i style="left:{(i + 0.5) / n * 100:.3f}%"></i>' for i in ticks)
+    intervals = []
+    for k in USAGE_INTERVALS:
+        cls = "interval" + (" on" if k == "auto" else "") + (" eff" if k == interval else "")
+        disabled = " disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""
+        title = ("hourly up to a week, daily up to 26 weeks, then weekly" if k == "auto"
+                 else f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer" if k == "hour"
+                 else f"one bar per {k}")
+        intervals.append(f'<button type="button" class="{cls}" data-i="{k}"{disabled} '
+                         f'title="{esc(title)}">{k}</button>')
+    grid = "".join(f'<i style="left:{(j + 0.5) / len(buckets) * 100:.3f}%"></i>'
+                   for j, _ in _ticks(series, interval, buckets))
     labels = "".join(
-        f'<span style="left:{(i + 0.5) / n * 100:.3f}%">{esc(_fmt_tick(first_o + i, step))}</span>'
-        for i in ticks)
-    last_active = max(i for i, d in enumerate(days) if d is not None)
+        f'<span style="left:{(j + 0.5) / len(buckets) * 100:.3f}%">{esc(label)}</span>'
+        for j, label in _ticks(series, interval, buckets))
+    last_active = max(j for j, bk in enumerate(buckets) if bk[1])
+    mini_vals = _binned(vals, USAGE_MINI_MAX_BARS)   # the minimap shows the whole history
     iso_first, iso_last = series["first"], date.fromordinal(first_o + n - 1).isoformat()
     payload = json.dumps(series, separators=(",", ":")).replace("</", "<\\/")
     return (
-        f'<section class="usage" id="usage"{" data-persist" if persist else ""}>'
-        '<div class="uhead"><div class="urange">'
+        '<section class="usage" id="usage">'
+        '<div class="uhead">'
+        f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
+        '<div class="uctl">'
+        f'<div class="seg uint" role="group" aria-label="plotting interval">{"".join(intervals)}</div>'
+        '<div class="urange">'
         f'<input type="date" id="uFrom" aria-label="window start" value="{iso_first}" '
         f'min="{iso_first}" max="{iso_last}"><span class="usep">&ndash;</span>'
         f'<input type="date" id="uTo" aria-label="window end" value="{iso_last}" '
         f'min="{iso_first}" max="{iso_last}">'
         f'<span class="udays" id="uDays">&middot; {n} day{_s(n)}</span></div>'
-        '<div class="uctl">'
-        f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
-        f'<div class="seg uint" role="group" aria-label="plotting interval">{intervals}</div>'
         f'<select class="uwin" id="uWin" aria-label="time range">{options}'
         '<option value="all" selected>all</option>'
         '<option value="custom" disabled hidden>custom</option></select></div></div>'
-        f'<div class="uro" id="uRo">{_readout_html(series, last_active)}</div>'
+        f'<div class="uro" id="uRo">{_readout_html(series, interval, buckets[last_active])}</div>'
         '<div class="uchart">'
         f'<span class="uy" id="uYTop" style="bottom:100%">{esc(_axis_cost(top))}</span>'
         f'<span class="uy" id="uYMid" style="bottom:50%">{esc(_axis_cost(_half(top)))}</span>'
         '<div class="uplot" id="uPlot" tabindex="0" '
-        'aria-label="daily usage; arrow keys step through days">'
+        'aria-label="usage over time; arrow keys step through bars">'
         f'<div class="uvg" id="uVg">{grid}</div><i class="ugl" style="bottom:50%"></i>'
         f'{_bars_html(vals, top, titles)}'
         '<i class="uhov" id="uHov" hidden></i><i class="usel" id="uSel" hidden></i>'
         '</div></div>'
         f'<div class="uaxis" id="uAxis">{labels}</div>'
-        f'<div class="umini" id="uMini">{_bars_html(vals, vmax)}'
+        f'<div class="umini" id="uMini">{_bars_html(mini_vals, max(mini_vals))}'
         '<div class="brush" id="uBrush" style="left:0%;width:100%">'
         '<b class="grip l"></b><b class="grip r"></b></div></div>'
         f'<div class="uminiaxis"><span>{esc(_fmt_day(first_o))}</span>'
         f'<span>{esc(_fmt_day(first_o + n - 1))}</span></div>'
-        '<p class="uhelp">Hover a day to inspect it, click to pin it. Drag on the chart '
+        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag on the chart '
         'to zoom in, or drag the minimap window to move or resize it.</p>'
         f'<script type="application/json" id="usageData">{payload}</script>'
         '</section>')
@@ -1290,6 +1380,8 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
   background:var(--panel2);outline:none}
 .udays{margin-left:4px}
 .uctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+/* in auto mode the interval in effect is underlined beside the "auto" choice */
+.seg button.eff{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--machine)}
 .seg{display:inline-flex;height:22px;border:1px solid var(--line);border-radius:5px;
   background:var(--panel);overflow:hidden}
 .seg button{appearance:none;-webkit-appearance:none;border:0;border-left:1px solid var(--line);
@@ -1318,6 +1410,11 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .uro-line{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .uro-k{display:inline-block;width:64px;font-size:9.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--faint)}
+/* fixed cells, name left and value right, so a metric switch changes numbers in place */
+.ui{display:inline-flex;justify-content:space-between;gap:8px;width:176px;margin-right:12px;
+  vertical-align:top;font-variant-numeric:tabular-nums}
+.ui>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ui>span:last-child{flex-shrink:0}
 .uro b{color:var(--ink);font-weight:600}
 .uro .mdl{color:var(--machine)}
 .uro .mdl.fam-claude{color:var(--claude)}
@@ -1661,7 +1758,8 @@ const METRIC={
   cost:{get:d=>d.c||0,nice:nice,axis:axisCost,col:0,fmt:fmtMoney},
   tok:{get:d=>d.o||0,nice:nice,axis:fmtNum,col:1,fmt:fmtNum},
   act:{get:d=>d.a||0,nice:niceMs,axis:axisDur,col:2,fmt:fmtDur}};
-const MAX_HOURLY_DAYS=31;
+const MAX_HOURLY_DAYS=31, AUTO_HOUR_MAX_DAYS=7, AUTO_DAY_MAX_DAYS=182;
+const autoInterval=n=>n<=AUTO_HOUR_MAX_DAYS?'hour':n<=AUTO_DAY_MAX_DAYS?'day':'week';
 const $=id=>document.getElementById(id);
 const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), hov=$('uHov'), sel=$('uSel'), vg=$('uVg'), axis=$('uAxis');
 const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
@@ -1670,8 +1768,8 @@ const fromIn=$('uFrom'), toIn=$('uTo'), winSel=$('uWin');
 const roDate=$('uRoDate'), ro1=$('uRo1'), ro2=$('uRo2'), ro3=$('uRo3'), pinBtn=$('uPin');
 const metrics=[...box.querySelectorAll('.metric')], intervals=[...box.querySelectorAll('.interval')];
 const tiles={}; document.querySelectorAll('.stat[data-k]').forEach(el=>{tiles[el.dataset.k]=el;});
-const persist=box.hasAttribute('data-persist');
-let metric='cost', interval='day', A=0, B=N-1, hot=-1, pinned=-1, cur=[];
+let metric='cost', interval='auto', A=0, B=N-1, hot=-1, pinned=-1, cur=[], eff='day';
+const effective=()=>interval==='auto'?autoInterval(B-A+1):interval;
 bars.querySelectorAll('i[title]').forEach(i=>i.removeAttribute('title'));   // the readout replaces native tooltips
 
 // ---- buckets: {k: key in the interval's index space, d: summed fields or null, from, to: day indices}
@@ -1691,14 +1789,17 @@ function bucketsFor(iv,a,b){
 // the y scale is locked to the whole history for the metric and interval, so
 // a moving window never rescales the bars
 const scaleCache={};
-function scaleMax(){ const key=metric+'/'+interval; if(!(key in scaleCache)){ const M=METRIC[metric]; let v=0;
-  bucketsFor(interval,0,N-1).forEach(x=>{ if(x.d){const y=M.get(x.d); if(y>v)v=y;} }); scaleCache[key]=M.nice(v); } return scaleCache[key]; }
+function scaleMax(){ const key=metric+'/'+eff; if(!(key in scaleCache)){ const M=METRIC[metric]; let v=0;
+  bucketsFor(eff,0,N-1).forEach(x=>{ if(x.d){const y=M.get(x.d); if(y>v)v=y;} }); scaleCache[key]=M.nice(v); } return scaleCache[key]; }
 const dens=n=>n>240?' packed':n>90?' dense':'';
-function paintBars(el,list,M,vmax){
-  const n=list.length; let h='';
-  for(const d of list){const v=d?M.get(d):0; h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';}
+function paintBars(el,values,vmax){
+  const n=values.length; let h='';
+  for(const v of values) h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';
   el.className='ubars'+dens(n); el.style.gridTemplateColumns='repeat('+n+',1fr)'; el.innerHTML=h;
 }
+// at most one bar per two pixels: wider histories fold into bins that show their peak
+function binned(values,maxBins){ if(values.length<=maxBins) return values; const g=Math.ceil(values.length/maxBins), out=[];
+  for(let i=0;i<values.length;i+=g) out.push(Math.max(...values.slice(i,i+g))); return out; }
 function sumWin(a,b){
   const t={s:0,i:0,a:0,o:0,ti:0,cr:0,cw:0,c:0,u:false,days:0,streak:0,streakStart:-1,busy:-1,busyV:0,m:{}}; let run=0;
   for(let i=a;i<=b;i++){const d=days[i]; if(!d){run=0;continue;}
@@ -1712,9 +1813,9 @@ function sumWin(a,b){
 const stepFrom=(steps,n)=>steps.find(st=>n/st<=8)||steps[steps.length-1]*Math.ceil(n/8/steps[steps.length-1]);
 function ticks(){
   const n=cur.length, out=[];
-  if(interval==='hour'){ const st=stepFrom([1,2,3,6,12,24,48,72,168,336],n);
+  if(eff==='hour'){ const st=stepFrom([1,2,3,6,12,24,48,72,168,336],n);
     cur.forEach((x,j)=>{ if(x.k%st===0) out.push([j,x.k%24===0?fmtShort(x.from):pad(x.k%24)+':00']); }); }
-  else if(interval==='week'){ const st=stepFrom([1,2,4,8,13,26,52],n);
+  else if(eff==='week'){ const st=stepFrom([1,2,4,8,13,26,52],n);
     for(let j=0;j<n;j+=st) out.push([j,st>=26?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
   else { const st=stepFrom([1,2,7,14,30,60,90,180,365],n);
     for(let j=0;j<n;j+=st) out.push([j,st>=60?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
@@ -1746,16 +1847,17 @@ function paintTiles(){
 }
 // ---- readout: the hovered bucket, else the pinned one, else the window's last active bucket
 function head(x){
-  if(interval==='hour'){ const h=x.k%24; return fmtDow(x.from)+DOT+fmtDate(x.from)+DOT+pad(h)+':00'+'\\u2013'+pad((h+1)%24)+':00'; }
-  if(interval==='week') return fmtShort(x.from)+RANGE+fmtDate(x.to);
+  if(eff==='hour'){ const h=x.k%24; return fmtDow(x.from)+DOT+fmtDate(x.from)+DOT+pad(h)+':00'+'\\u2013'+pad((h+1)%24)+':00'; }
+  if(eff==='week') return fmtShort(x.from)+RANGE+fmtDate(x.to);
   return fmtDow(x.k)+DOT+fmtDate(x.k);
 }
+// fixed-width cells, name left and value right, so a metric switch changes numbers in place
 function split(target,obj,model){ const key=target.firstChild, M=METRIC[metric]; target.textContent=''; target.appendChild(key);
   const items=Object.entries(obj||{}).map(([k,row])=>[k,row[M.col]]).filter(([,v])=>v>0).sort((x,y)=>y[1]-x[1]);
-  items.slice(0,3).forEach(([k,v],i)=>{ if(i) target.appendChild(document.createTextNode(DOT));
-    target.appendChild(el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k));
-    target.appendChild(document.createTextNode(' '+M.fmt(v))); });
-  if(items.length>3) target.appendChild(document.createTextNode(DOT+'+'+(items.length-3)+' more')); }
+  items.slice(0,3).forEach(([k,v])=>{ const cell=el('span','ui');
+    cell.appendChild(el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k));
+    cell.appendChild(el('span',null,M.fmt(v))); target.appendChild(cell); });
+  if(items.length>3) target.appendChild(el('span',null,'+'+(items.length-3)+' more')); }
 function lastActive(){ for(let j=cur.length-1;j>=0;j--) if(cur[j].d) return j; return cur.length-1; }
 function paintReadout(j){
   const x=cur[j], d=x.d; roDate.textContent=head(x); ro1.textContent='';
@@ -1782,12 +1884,15 @@ function presetOf(){                        // which preset the window equals, i
   for(const o of winSel.options){const p=+o.value; if(p&&B===t&&A===Math.max(0,t-p+1)) return o.value;}
   return null;
 }
+function paintIntervals(){ intervals.forEach(b=>{ b.classList.toggle('on',b.dataset.i===interval);
+  b.classList.toggle('eff',interval==='auto'&&b.dataset.i===eff); }); }
 function render(){
   const M=METRIC[metric], n=B-A+1;
   const hourly=intervals.find(b=>b.dataset.i==='hour'); if(hourly){ hourly.disabled=n>MAX_HOURLY_DAYS;
-    if(hourly.disabled&&interval==='hour'){ interval='day'; pinned=-1; intervals.forEach(b=>b.classList.toggle('on',b.dataset.i==='day')); } }
-  cur=bucketsFor(interval,A,B); const top=scaleMax();
-  paintBars(bars,cur.map(x=>x.d),M,top); hot=-1; hov.hidden=true;
+    if(hourly.disabled&&interval==='hour'){ interval='day'; pinned=-1; } }
+  const was=eff; eff=effective(); if(eff!==was){ pinned=-1; renderMini(); } paintIntervals();
+  cur=bucketsFor(eff,A,B); const top=scaleMax();
+  paintBars(bars,cur.map(x=>x.d?M.get(x.d):0),top); hot=-1; hov.hidden=true;
   yTop.textContent=M.axis(top); yMid.textContent=M.axis(top/2);
   daysEl.textContent='\\u00b7 '+n+' day'+s(n);
   brush.style.left=(A/N*100)+'%'; brush.style.width=(n/N*100)+'%';
@@ -1795,27 +1900,33 @@ function render(){
   fromIn.value=isoOf(A); toIn.value=isoOf(B);
   paintAxis(); paintTiles(); setPin(pinned);
 }
-// the minimap shows the whole history by day, or by week in the weekly view;
-// a history of hours would be narrower than a pixel per bar
-function renderMini(){ const M=METRIC[metric], list=bucketsFor(interval==='week'?'week':'day',0,N-1).map(x=>x.d);
-  let v=0; list.forEach(d=>{ if(d){const y=M.get(d); if(y>v)v=y;} }); paintBars(mbars,list,M,v); }
+// the minimap shows the whole history at the plotted interval, binned to the pixel grid
+function renderMini(){ const M=METRIC[metric];
+  const values=binned(bucketsFor(eff,0,N-1).map(x=>x.d?M.get(x.d):0),Math.max(1,Math.floor(mbars.getBoundingClientRect().width/2)));
+  paintBars(mbars,values,Math.max(...values)); }
+let miniTimer=0; addEventListener('resize',()=>{clearTimeout(miniTimer); miniTimer=setTimeout(renderMini,120);});
 function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
-function syncUrl(){ if(!persist) return;
-  const p=presetOf(); const r=p==='all'?'':p?p+'d':isoOf(A)+'..'+isoOf(B);
-  const tail=(metric!=='cost'?'/'+metric:'')+(interval!=='day'?'/'+interval:'');
-  const h=(r||tail)?'#'+r+tail:'';
-  if(h!==location.hash) history.replaceState(null,'',location.pathname+location.search+h);
-}
+// ---- the view lives in the query string as separate fields, defaults omitted:
+// ?range=30d or ?from=2026-03-01&to=2026-03-15, &metric=tok|act, &interval=hour|day|week.
+// A browser that refuses to rewrite a file URL's query gets the same fields in the fragment.
+function stateParams(){ const q=new URLSearchParams(), p=presetOf();
+  if(p&&p!=='all') q.set('range',p+'d'); else if(!p){ q.set('from',isoOf(A)); q.set('to',isoOf(B)); }
+  if(metric!=='cost') q.set('metric',metric); if(interval!=='auto') q.set('interval',interval); return q.toString(); }
+function syncUrl(){ const q=stateParams(), want=location.pathname+(q?'?'+q:'')+location.hash;
+  if(want===location.href.slice(location.origin.length)&&location.origin!=='null') return;
+  try{ history.replaceState(null,'',want); }
+  catch(e){ history.replaceState(null,'',location.pathname+location.search+(q?'#'+q:'')); } }
 function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1); else setWin(t-(+p)+1,t); }
 function setMetric(k){ if(k===metric) return; metric=k;
   metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
-function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1;
-  intervals.forEach(b=>b.classList.toggle('on',b.dataset.i===k)); renderMini(); render(); }
-function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..2026-03-15", "#7d/act/hour"
-  const m=/^#?([^/]*)(?:\\/(cost|tok|act))?(?:\\/(hour|day|week))?$/.exec(location.hash)||[];
-  setMetric(m[2]||'cost'); setIntervalMode(m[3]||'day');
-  const r=m[1]||'', pd=/^(\\d+)d$/.exec(r), cd=/^(\\d{4}-\\d{2}-\\d{2})\\.\\.(\\d{4}-\\d{2}-\\d{2})$/.exec(r);
-  if(pd) applyPreset(pd[1]); else if(cd) setWin(dayNum(cd[1])-D0,dayNum(cd[2])-D0); else applyPreset('all');
+function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1; render(); }
+function readUrl(){
+  let q=new URLSearchParams(location.search); if(![...q.keys()].length) q=new URLSearchParams(location.hash.slice(1));
+  setMetric(METRIC[q.get('metric')]?q.get('metric'):'cost');
+  setIntervalMode(/^(auto|hour|day|week)$/.test(q.get('interval')||'')?q.get('interval'):'auto');
+  const pd=/^(\\d+)d$/.exec(q.get('range')||''), from=q.get('from'), to=q.get('to'), iso=/^\\d{4}-\\d{2}-\\d{2}$/;
+  if(from&&to&&iso.test(from)&&iso.test(to)) setWin(dayNum(from)-D0,dayNum(to)-D0);
+  else if(pd) applyPreset(pd[1]); else applyPreset('all');
 }
 
 // ---- controls
@@ -1831,7 +1942,6 @@ const onDate=e=>{ if(!fromIn.value||!toIn.value) return;
 [fromIn,toIn].forEach(inp=>{ inp.addEventListener('change',onDate);
   inp.addEventListener('click',()=>{ try{inp.showPicker();}catch(e){} }); });
 pinBtn.addEventListener('click',()=>setPin(-1));
-if(persist) addEventListener('hashchange',readUrl);
 
 // ---- minimap brush: drag inside to move, an edge to resize, outside to draw anew
 let mode=null, x0=0, A0=0, B0=0;
@@ -1884,7 +1994,7 @@ plot.addEventListener('keydown',e=>{
   else if(e.key==='Escape') j=-1; else return;
   e.preventDefault(); setPin(j>=0?cur[j].k:-1);
 });
-cur=bucketsFor('day',A,B);
+eff=effective(); cur=bucketsFor(eff,A,B); paintIntervals(); renderMini();
 readUrl();
 })();
 """
@@ -2468,7 +2578,7 @@ def render_index(entries, refreshed_at=None, source_label=None):
         series=series, window=window,
     )
     stats_html = _stat_cards_html(stat_cards)
-    usage_html = _usage_html(series, persist=True) if series else ""
+    usage_html = _usage_html(series) if series else ""
 
     rows = []
     for sub, tl in sorted(entries, key=lambda e: e[1]["stats"]["last_ts"] or "", reverse=True):
