@@ -36,7 +36,7 @@ def _entry_ids(page):
 
 
 def _session_ids(page):
-    return re.findall(r'<div class="sess" id="([^"]+)"', page)
+    return re.findall(r'<summary class="sess" id="([^"]+)"', page)
 
 
 def _fragment_refs(page):
@@ -264,7 +264,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             timeline["milestones"][1]["activity"]["tools"], {"Shell": 1})
         page = render(timeline)
         self.assertIn("triggered /my/subagent/name subagent", page)
-        self.assertNotIn('<section class="session-block" data-automated>', page)
+        self.assertNotIn('<details class="session-block" open data-automated>', page)
 
     def test_exec_workdirs_group_under_project_and_automated_sessions_are_visible(self):
         # One synthetic remote links the interactive checkout and temporary clone.
@@ -305,8 +305,8 @@ class CodexTokenParsingTests(unittest.TestCase):
         merged = _merge_timelines(grouped[project_path])
         page = render(merged)
 
-        self.assertEqual(page.count('<section class="session-block" data-automated>'), 1)
-        self.assertEqual(page.count('<section class="session-block"'), 2)
+        self.assertEqual(page.count('<details class="session-block" open data-automated>'), 1)
+        self.assertEqual(page.count('<details class="session-block"'), 2)
         self.assertIn('>codex exec</span>', page)
         self.assertIn('triggered /root/reviewer subagent', page)
         self.assertEqual(merged["stats"]["sessions"], 1)
@@ -445,7 +445,7 @@ class CodexTokenParsingTests(unittest.TestCase):
             positions = [summary.find(label) for label in shared_labels]
             self.assertEqual(positions, sorted(positions))
         self.assertEqual(page.count(
-            '<section class="session-block" data-automated>'), 0)
+            '<details class="session-block" open data-automated>'), 0)
 
     def test_model_switch_attributes_each_cumulative_delta_to_the_active_model(self):
         records = [
