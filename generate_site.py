@@ -541,12 +541,12 @@ def _fmt_day_short(o):
 
 
 def _nice(v):
-    """Smallest 1, 2, 4, or 10 × 10^k at or above v: the chart's top gridline.
-    Halving any of these gives another round number for the middle line."""
+    """Smallest 1, 2, 4, 5, or 10 × 10^k at or above v: the chart's top
+    gridline. Halving any of these gives a round number for the middle line."""
     if v <= 0:
         return 1
     e = 10.0 ** math.floor(math.log10(v))
-    for m in (1, 2, 4, 10):
+    for m in (1, 2, 4, 5, 10):
         r = m * e
         if r >= v - 1e-9:
             return int(r) if r >= 1 else r
@@ -1650,7 +1650,7 @@ const fmtMoney=d=>d>=100?'$'+loc(d):'$'+d.toFixed(2);
 const axisCost=v=>v<1?'$'+v.toFixed(2):'$'+loc(v);
 const axisDur=ms=>{const h=ms/36e5;return h>=1&&Number.isInteger(h)?h+'h':fmtDur(ms);};
 const nice=v=>{if(v<=0)return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));
-  for(const m of [1,2,4,10]){if(m*e>=v-1e-9)return m*e;}return 10*e;};
+  for(const m of [1,2,4,5,10]){if(m*e>=v-1e-9)return m*e;}return 10*e;};
 const niceMs=ms=>{const min=ms/6e4;if(min<=60){for(const m of [1,2,4,10,20,40,60])if(m>=min-1e-9)return m*6e4;}
   return nice(min/60)*36e5;};
 const cleanModel=m=>m.replace(/claude-/g,'');

@@ -166,9 +166,10 @@ class UsageSeriesTests(unittest.TestCase):
 
     def test_axis_rounding_gives_round_gridlines(self):
         # Each top value must halve to another round number for the middle
-        # gridline, which the 1-2-4-10 ladder guarantees.
-        self.assertEqual([_nice(v) for v in (0.7, 3, 12.37, 58_000)],
-                         [1, 4, 20, 100_000])
+        # gridline, which the 1-2-4-5-10 ladder guarantees; 404 rounds to 500
+        # rather than jumping to 1,000.
+        self.assertEqual([_nice(v) for v in (0.7, 3, 12.37, 404, 58_000)],
+                         [1, 4, 20, 500, 100_000])
         # Only a half-dollar middle line needs cents; the ladder keeps every
         # other gridline value whole.
         self.assertEqual([_axis_cost(0.5), _axis_cost(2000)], ["$0.50", "$2,000"])
