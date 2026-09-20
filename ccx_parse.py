@@ -482,6 +482,8 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
             _finalize_milestone(m, milestones)
 
     for first_ts, sid, recs in per_file:
+        if not recs:
+            continue   # an empty transcript file is not a conversation
         sess = {"id": sid, "last_ts": first_ts, "title": None, "tool": "claude"}
         # session-start pseudo-milestone captures pre-first-prompt activity
         cur = _new_milestone("session", None, first_ts, sid, "session-start")

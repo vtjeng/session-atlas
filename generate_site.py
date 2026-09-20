@@ -25,7 +25,7 @@ import re
 import tempfile
 import unicodedata
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -468,32 +468,549 @@ def _sc_var(num):
 
 
 def _stat_cards_html(cards):
-    """Hero stat grid shared by the project page and the index-page hero.
+    """Hero stat tiles shared by the project page and the index-page hero.
 
-    Each card is ``(number, label)`` or ``(number, label, tooltip)``.
+    Each tile is ``(key, label, number, detail, tooltip)``. The key is a
+    ``data-k`` hook the usage explorer uses to recompute the tile for the
+    selected date window.
     """
     out = []
-    for c in cards:
-        n, l = c[0], c[1]
-        tip = f' title="{esc(c[2])}"' if len(c) > 2 and c[2] else ""
-        out.append(f'<div class="stat"{tip}><div class="n">{esc(n)}</div>'
-                   f'<div class="l lbl">{esc(l)}</div></div>')
+    for k, label, n, detail, tip in cards:
+        title = f' title="{esc(tip)}"' if tip else ""
+        out.append(f'<div class="stat" data-k="{esc(k)}"{title}>'
+                   f'<div class="l lbl">{esc(label)}</div><div class="n">{esc(n)}</div>'
+                   f'<div class="d">{detail}</div></div>')
     return "".join(out)
 
 
 def _summary_stat_cards(*, sessions, inputs, active_ms, tokens_out,
-                        days_active, by_model):
-    """Build the shared summary metrics used by project and index heroes."""
+                        days_active, by_model, series=None, window=None):
+    """Build the shared summary tiles used by project and index heroes.
+
+    ``series`` and ``window`` (see ``_daily_series`` and ``_series_window``)
+    supply the streak and busiest-day tiles and every tile's detail line.
+    """
     _, cost_text, cost_label, cost_title = cost_display(by_model or {})
-    cards = [
-        (fmt_num(sessions), f'session{_s(sessions)}'),
-        (fmt_num(inputs), f'input{_s(inputs)}', INPUT_COUNT_EXPLANATION),
-        (fmt_dur(active_ms), "agent active time"),
-        (fmt_num(tokens_out), "tokens out"),
-        (fmt_num(days_active), f'day{_s(days_active)} active'),
-        (cost_text, cost_label, cost_title),
+    d = _tile_details(series, window) if series and window else {}
+    dash = "&mdash;"
+    streak = window["streak"] if window else 0
+    busy_n = fmt_dur(window["busy_v"]) if window and window["busy"] is not None else "—"
+    return [
+        ("sessions", f'session{_s(sessions)}', fmt_num(sessions),
+         d.get("sessions", dash), None),
+        ("inputs", f'input{_s(inputs)}', fmt_num(inputs),
+         d.get("inputs", dash), INPUT_COUNT_EXPLANATION),
+        ("active", "agent active time", fmt_dur(active_ms), d.get("active", dash), None),
+        ("tok", "tokens out", fmt_num(tokens_out), d.get("tok", dash), None),
+        ("days", f'day{_s(days_active)} active', fmt_num(days_active),
+         d.get("days", dash), None),
+        ("cost", cost_label, cost_text, d.get("cost", dash), cost_title),
+        ("streak", "longest streak", f"{streak} day{_s(streak)}", d.get("streak", dash),
+         "Longest run of consecutive days with activity in this range"),
+        ("busiest", "busiest day", busy_n, d.get("busiest", dash),
+         "Day with the most agent active time in this range"),
     ]
-    return cards
+
+
+# ------------------------------------------------------------ usage series -- #
+# The hero chart and the live stat cards share one dense per-day series. The
+# generator embeds it as JSON and renders the all-time state; the client
+# re-sums it for the selected window so the chart, cards, and rates agree.
+# Day keys: s sessions started, i inputs, a active ms, o tokens out, ti uncached
+# input, cr cache read, cw cache write, c est. cost, u unpriced flag, m cost by
+# model, p cost by project (index only). Idle days are null.
+USAGE_METRICS = (("cost", "est. API cost"), ("tok", "tokens out"),
+                 ("act", "agent active time"))
+USAGE_PRESETS = (7, 30, 90)
+USAGE_INTERVALS = ("auto", "hour", "day", "week")
+USAGE_MAX_HOURLY_DAYS = 31  # hourly bars need a window of a month or less
+USAGE_AUTO_HOUR_MAX_DAYS = USAGE_MAX_HOURLY_DAYS   # "auto": hourly up to a month ...
+USAGE_AUTO_DAY_MAX_DAYS = 182   # ... daily up to 26 weeks, weekly beyond
+USAGE_MINI_MAX_BARS = 360   # the static minimap folds a longer history into bins
+USAGE_MIN_ACTIVE_DAYS = 2   # a one-day history has nothing to explore
+
+
+def _day_ordinal(ts):
+    d = parse_ts(ts)
+    return d.date().toordinal() if d else None
+
+
+def _fmt_day(o):
+    return date.fromordinal(o).strftime("%b %-d, %Y")
+
+
+def _fmt_day_short(o):
+    return date.fromordinal(o).strftime("%b %-d")
+
+
+def _nice(v):
+    """Smallest 1, 2, 4, 5, or 10 × 10^k at or above v: the chart's top
+    gridline. Halving any of these gives a round number for the middle line."""
+    if v <= 0:
+        return 1
+    e = 10.0 ** math.floor(math.log10(v))
+    for m in (1, 2, 4, 5, 10):
+        r = m * e
+        if r >= v - 1e-9:
+            return int(r) if r >= 1 else r
+    return int(10 * e)
+
+
+def _half(v):
+    h = v / 2
+    return int(h) if float(h).is_integer() else h
+
+
+def _axis_cost(v):
+    return f"${v:.2f}" if v < 1 else f"${round(v):,}"
+
+
+def _fmt_money(d):
+    """Dollar amount with cents below $100; per-day and per-unit figures need them."""
+    return f"${d:,.0f}" if d >= 100 else f"${d:.2f}"
+
+
+def _day_hour(ts):
+    """``(day ordinal, hour)`` of a timestamp in local time, or None."""
+    d = parse_ts(ts)
+    return (d.date().toordinal(), d.hour) if d else None
+
+
+def _hour_slices(ts, duration_ms):
+    """``[(day ordinal, hour, fraction)]`` for the local hours an entry's
+    activity spans, from its timestamp for its active duration."""
+    start = parse_ts(ts)
+    if not duration_ms or duration_ms <= 0:
+        return [(start.date().toordinal(), start.hour, 1.0)]
+    end = start + timedelta(milliseconds=duration_ms)
+    out, t = [], start
+    while t < end:
+        boundary = t.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        seg_end = min(boundary, end)
+        out.append((t.date().toordinal(), t.hour,
+                    (seg_end - t).total_seconds() * 1000 / duration_ms))
+        t = seg_end
+    return out
+
+
+def _spread(total, fractions):
+    """Split an integer total across slices by fraction, keeping the exact sum."""
+    out, assigned, cum = [], 0, 0.0
+    for f in fractions:
+        cum += f
+        target = round(total * cum)
+        out.append(target - assigned)
+        assigned = target
+    if out:
+        out[-1] += total - assigned
+    return out
+
+
+def _finish_bucket(b, keys):
+    """Price a bucket's tokens and drop its zero fields for the JSON series.
+
+    ``m`` and ``p`` map a model or project to ``[cost, tokens out, active
+    ms]`` so the readout can split any plotted metric.
+    """
+    _, total, unpriced = pricing.cost_breakdown(b["by_model"])
+    d = {k: b[k] for k in keys if b[k]}
+    if total:
+        d["c"] = round(total, 4)
+    if unpriced:
+        d["u"] = 1
+    by_model = {}
+    for mid, tk in b["by_model"].items():
+        row = [round(pricing.estimate_cost({mid: tk}), 4), tk.get("out", 0), b["ma"].get(mid, 0)]
+        if any(row):
+            by_model[mid] = row
+    if by_model:
+        d["m"] = by_model
+    if b["p"]:
+        d["p"] = {k: [round(v[0], 4), v[1], v[2]] for k, v in b["p"].items()}
+    return d
+
+
+def _daily_series(entries, refreshed):
+    """Per-day and per-hour usage for one or many timelines.
+
+    ``entries`` is ``[(label, timeline)]``; ``label`` names the project in the
+    per-bucket ``p`` split and is only used when there is more than one entry.
+    Returns ``{"first": ISO date, "days": [...], "hours": [...]}`` or None
+    without any dated milestone. ``days`` is dense from the first activity
+    through the refresh day. ``hours`` is sparse: ``[hour index, bucket]``
+    pairs for active hours only, where the index counts hours from midnight
+    of the first day, without the cache fields only the daily tiles need.
+
+    An entry's tokens, cost, and active time are spread over the hours from
+    its timestamp for its active duration, in proportion to the time in each
+    hour, so a long task fills the hours it ran rather than the hour it
+    started. Inputs count in the starting hour, and a session counts in the
+    day and hour of its first milestone.
+    """
+    buckets = {}   # (day ordinal, hour or None) -> accumulator
+
+    def bucket(o, h):
+        return buckets.setdefault((o, h), {
+            "s": 0, "i": 0, "a": 0, "o": 0, "ti": 0, "cr": 0, "cw": 0,
+            "by_model": {}, "ma": {}, "p": {}})
+
+    multi = len(entries) > 1
+    for label, tl in entries:
+        first_seen = {}
+        for m in tl["milestones"]:
+            when = _day_hour(m["ts"])
+            if when is None:
+                continue
+            sid = m["session"]
+            if sid not in first_seen or when < first_seen[sid]:
+                first_seen[sid] = when
+            a = m["activity"]
+            # Active time is recorded per entry, not per model: attribute it to
+            # the entry's most-used model, as the timeline's model chip does.
+            dominant = max(a["models"], key=a["models"].get) if a.get("models") else None
+            slices = _hour_slices(m["ts"], a["duration_ms"])
+            fractions = [f for _, _, f in slices]
+            flat = {k: _spread(a[src], fractions) for k, src in (
+                ("a", "duration_ms"), ("o", "tokens_out"), ("ti", "tokens_in"),
+                ("cr", "cache_read"), ("cw", "cache_create"))}
+            per_model = {
+                mid: {k: _spread(v, fractions) for k, v in tk.items()}
+                for mid, tk in (a.get("tokens_by_model") or {}).items()}
+            for n, (o, h, _) in enumerate(slices):
+                slice_models = {mid: {k: v[n] for k, v in tk.items()}
+                                for mid, tk in per_model.items()}
+                cost = pricing.estimate_cost(slice_models)
+                for b in (bucket(o, None), bucket(o, h)):
+                    if n == 0 and m["kind"] in ("prompt", "command", "recovered"):
+                        b["i"] += 1
+                    for k, values in flat.items():
+                        b[k] += values[n]
+                    merge_token_models(b["by_model"], slice_models)
+                    if dominant and flat["a"][n]:
+                        b["ma"][dominant] = b["ma"].get(dominant, 0) + flat["a"][n]
+                    if multi and (cost or flat["o"][n] or flat["a"][n]):
+                        row = b["p"].setdefault(label, [0.0, 0, 0])
+                        row[0] += cost
+                        row[1] += flat["o"][n]
+                        row[2] += flat["a"][n]
+        for session in tl["sessions"]:
+            if _is_automated_codex(session):
+                continue
+            when = first_seen.get(session["id"])
+            if when is None:
+                when = _day_hour(session.get("last_ts"))
+            if when is not None:
+                bucket(when[0], None)["s"] += 1
+                bucket(*when)["s"] += 1
+    if not buckets:
+        return None
+    first = min(o for o, _ in buckets)
+    last = max(max(o for o, _ in buckets), refreshed.date().toordinal())
+    days = [
+        _finish_bucket(buckets[(o, None)], ("s", "i", "a", "o", "ti", "cr", "cw"))
+        if (o, None) in buckets else None
+        for o in range(first, last + 1)]
+    hours = [
+        [(o - first) * 24 + h, _finish_bucket(b, ("s", "i", "a", "o"))]
+        for (o, h), b in sorted(kv for kv in buckets.items() if kv[0][1] is not None)]
+    return {"first": date.fromordinal(first).isoformat(), "days": days, "hours": hours}
+
+
+def _series_window(series, a=0, b=None):
+    """Sum ``days[a..b]`` the way the client does for the selected window.
+
+    Returns the flat sums plus ``days`` (active days), ``streak`` and
+    ``streak_start`` (the longest run of consecutive active days and where it
+    begins), ``busy`` and ``busy_v`` (the day with the most active time and
+    that time), ``m`` (cost by model), and ``u`` (partial cost).
+    """
+    days = series["days"]
+    if b is None:
+        b = len(days) - 1
+    t = {"s": 0, "i": 0, "a": 0, "o": 0, "ti": 0, "cr": 0, "cw": 0, "c": 0.0,
+         "u": False, "days": 0, "streak": 0, "streak_start": None,
+         "busy": None, "busy_v": 0, "m": {}}
+    run = 0
+    for i in range(a, b + 1):
+        d = days[i]
+        if d is None:
+            run = 0
+            continue
+        run += 1
+        if run > t["streak"]:
+            t["streak"], t["streak_start"] = run, i - run + 1
+        t["days"] += 1
+        for k in ("s", "i", "a", "o", "ti", "cr", "cw"):
+            t[k] += d.get(k, 0)
+        t["c"] += d.get("c", 0)
+        t["u"] = t["u"] or bool(d.get("u"))
+        if d.get("a", 0) > t["busy_v"]:
+            t["busy_v"], t["busy"] = d["a"], i
+        for mid, row in (d.get("m") or {}).items():
+            t["m"][mid] = t["m"].get(mid, 0) + row[0]
+    return t
+
+
+def _tile_details(series, w, a=0, b=None):
+    """Detail line for each stat tile, as HTML, for the window ``a..b``."""
+    days = series["days"]
+    if b is None:
+        b = len(days) - 1
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    n = b - a + 1
+    plus = "+" if w["u"] else ""
+    prompt_tokens = w["ti"] + w["cr"] + w["cw"]
+    if w["streak"]:
+        s0 = first_o + w["streak_start"]
+        streak = (_fmt_day_short(s0) if w["streak"] == 1
+                  else f"{_fmt_day_short(s0)} – {_fmt_day_short(s0 + w['streak'] - 1)}")
+    else:
+        streak = "—"
+    busiest = (f"{_fmt_dow(first_o + w['busy'])} · {_fmt_day_short(first_o + w['busy'])}"
+               if w["busy"] is not None else "—")
+
+    def rate(value, unit):
+        return f"<b>{esc(value)}</b> {unit}"
+
+    return {
+        "sessions": rate(f"{w['i'] / w['s']:.1f}", "inputs per session") if w["s"] else "—",
+        "inputs": rate(_fmt_money(w["c"] / w["i"]) + plus, "per input") if w["i"] else "—",
+        "active": (rate(_fmt_money(w["c"] / (w["a"] / 3_600_000)) + plus, "per active hour")
+                   if w["a"] else "—"),
+        "tok": rate(fmt_num(round(w["o"] / w["i"])), "per input") if w["i"] else "—",
+        "days": f"of {n} day{_s(n)}",
+        "cost": (rate(f"{round(w['cr'] / prompt_tokens * 100)}%", "cache hit rate")
+                 if prompt_tokens else "—"),
+        "streak": esc(streak),
+        "busiest": esc(busiest),
+    }
+
+
+def _auto_interval(n_days):
+    """The interval the ``auto`` setting picks for a window of ``n_days``."""
+    if n_days <= USAGE_AUTO_HOUR_MAX_DAYS:
+        return "hour"
+    if n_days <= USAGE_AUTO_DAY_MAX_DAYS:
+        return "day"
+    return "week"
+
+
+def _merge_bucket(t, d):
+    """Add bucket ``d`` into accumulator ``t`` (the client's ``merge``)."""
+    for k in ("s", "i", "a", "o", "c"):
+        t[k] = t.get(k, 0) + d.get(k, 0)
+    if d.get("u"):
+        t["u"] = 1
+    for key in ("m", "p"):
+        for name, row in (d.get(key) or {}).items():
+            acc = t.setdefault(key, {}).setdefault(name, [0, 0, 0])
+            for n, v in enumerate(row):
+                acc[n] += v
+    return t
+
+
+def _buckets(series, interval, a=0, b=None):
+    """Bars for days ``a..b`` at ``interval``: ``(key, bucket, from, to)``
+    tuples where ``bucket`` is None when idle and ``from``/``to`` are day
+    indices. Mirrors the client's ``bucketsFor``."""
+    days = series["days"]
+    if b is None:
+        b = len(days) - 1
+    if interval == "day":
+        return [(i, days[i], i, i) for i in range(a, b + 1)]
+    if interval == "hour":
+        by_hour = dict(series["hours"])
+        return [(h, by_hour.get(h), h // 24, h // 24) for h in range(a * 24, (b + 1) * 24)]
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    out = []
+    ws = a - date.fromordinal(first_o + a).weekday()   # Monday
+    while ws <= b:
+        lo, hi = max(a, ws), min(b, ws + 6)
+        t = None
+        for i in range(lo, hi + 1):
+            if days[i]:
+                t = _merge_bucket(t or {}, days[i])
+        out.append((ws, t, lo, hi))
+        ws += 7
+    return out
+
+
+def _binned(values, max_bins):
+    """At most ``max_bins`` bars: a longer series folds into bins of its peak."""
+    if len(values) <= max_bins:
+        return values
+    g = math.ceil(len(values) / max_bins)
+    return [max(values[i:i + g]) for i in range(0, len(values), g)]
+
+
+def _step_from(steps, n):
+    """The first step that leaves at most eight ticks over ``n`` buckets."""
+    for st in steps:
+        if n / st <= 8:
+            return st
+    return steps[-1] * math.ceil(n / 8 / steps[-1])
+
+
+def _ticks(series, interval, buckets):
+    """``[(bucket index, label)]`` axis ticks, anchored to midnight for hours
+    and to the window start otherwise. Mirrors the client's ``ticks``."""
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    n = len(buckets)
+    if interval == "hour":
+        st = _step_from((1, 2, 3, 6, 12, 24, 48, 72, 168, 336), n)
+        return [(j, _fmt_day_short(first_o + frm) if key % 24 == 0 else f"{key % 24:02d}:00")
+                for j, (key, _, frm, _) in enumerate(buckets) if key % st == 0]
+    if interval == "week":
+        st = _step_from((1, 2, 4, 8, 13, 26, 52), n)
+    else:
+        st = _step_from((1, 2, 7, 14, 30, 60, 90, 180, 365), n)
+    fmt = "%b %Y" if st >= (26 if interval == "week" else 60) else "%b %-d"
+    return [(j, date.fromordinal(first_o + buckets[j][0]).strftime(fmt))
+            for j in range(0, n, st)]
+
+
+def _fmt_dow(o):
+    return date.fromordinal(o).strftime("%a")
+
+
+def _model_span(mid):
+    fam = model_family(mid)
+    cls = f"mdl fam-{fam}" if fam else "mdl"
+    return f'<span class="{cls}">{esc(clean_model(mid))}</span>'
+
+
+def _readout_head(series, interval, bucket):
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    key, _, frm, to = bucket
+    if interval == "hour":
+        h = key % 24
+        return (f"{_fmt_dow(first_o + frm)} · {_fmt_day(first_o + frm)} · "
+                f"{h:02d}:00–{(h + 1) % 24:02d}:00")
+    if interval == "week":
+        return f"{_fmt_day_short(first_o + frm)} – {_fmt_day(first_o + to)}"
+    return f"{_fmt_dow(first_o + key)} · {_fmt_day(first_o + key)}"
+
+
+def _readout_html(series, interval, bucket):
+    """The inspection row for one bar: its totals, then the top models and,
+    on a multi-project series, the top projects by cost in fixed-width cells
+    so a metric switch changes the numbers in place."""
+    d = bucket[1]
+    if not d:
+        line1 = "no activity"
+    else:
+        plus = "+" if d.get("u") else ""
+        n_in, n_s = d.get("i", 0), d.get("s", 0)
+        line1 = (f'<b>{esc(_fmt_money(d.get("c", 0)))}{plus}</b> est. API cost · '
+                 f'<b>{esc(fmt_num(d.get("o", 0)))}</b> tokens out · '
+                 f'<b>{esc(fmt_dur(d.get("a", 0)))}</b> agent active · '
+                 f'<b>{n_in}</b> input{_s(n_in)} · <b>{n_s}</b> session{_s(n_s)} started')
+    lines = [f'<div class="uro-line" id="uRo1">{line1}</div>']
+    multi = any("p" in x for x in series["days"] if x)
+    for key, label, model in (("m", "models", True), ("p", "projects", False)):
+        if key == "p" and not multi:
+            continue
+        items = sorted(((d or {}).get(key) or {}).items(), key=lambda kv: -kv[1][0])
+        items = [(k, v) for k, v in items if v[0]]
+        cells = [f'<span class="ui">{_model_span(k) if model else f"<span>{esc(k)}</span>"}'
+                 f'<span>{esc(_fmt_money(v[0]))}</span></span>' for k, v in items[:3]]
+        if len(items) > 3:
+            cells.append(f"<span>+{len(items) - 3} more</span>")
+        lines.append(f'<div class="uro-line" id="uRo{len(lines) + 1}">'
+                     f'<span class="uro-k">{label}</span>{"".join(cells)}</div>')
+    return (f'<div class="uro-head"><time id="uRoDate">{esc(_readout_head(series, interval, bucket))}</time>'
+            '<button type="button" class="ubtn" id="uPin" disabled>unpin</button></div>'
+            + "".join(lines))
+
+
+def _bars_html(values, vmax, titles=None):
+    """A ``.ubars`` grid: one bar per value, heights relative to ``vmax``."""
+    n = len(values)
+    cls = "ubars" + (" packed" if n > 240 else " dense" if n > 90 else "")
+    bars = []
+    for i, v in enumerate(values):
+        h = v / vmax * 100 if vmax else 0
+        tip = f' title="{esc(titles[i])}"' if titles else ""
+        bars.append(f'<i style="height:{h:.2f}%"{tip}></i>')
+    return (f'<div class="{cls}" style="grid-template-columns:repeat({n},1fr)">'
+            f'{"".join(bars)}</div>')
+
+
+def _usage_html(series):
+    """The hero's usage explorer, rendered for the whole series with the cost
+    metric at the interval ``auto`` picks for it; ``USAGE_JS`` takes over for
+    windowing, other metrics and intervals, and hover, and mirrors the view
+    in the URL's query string.
+    """
+    days = series["days"]
+    if sum(1 for d in days if d is not None) < USAGE_MIN_ACTIVE_DAYS:
+        return ""
+    n = len(days)
+    first_o = date.fromisoformat(series["first"]).toordinal()
+    interval = _auto_interval(n)
+    buckets = _buckets(series, interval)
+    vals = [d.get("c", 0) if d else 0 for _, d, _, _ in buckets]
+    top = _nice(max(vals))
+    titles = [f'{_readout_head(series, interval, bk)} · '
+              f'{_fmt_money(v) + " est. API cost" if bk[1] else "no activity"}'
+              for bk, v in zip(buckets, vals)]
+    metrics = "".join(
+        f'<button type="button" class="metric{" on" if k == "cost" else ""}" '
+        f'data-m="{k}">{esc(label)}</button>' for k, label in USAGE_METRICS)
+    options = "".join(f'<option value="{p}">{p}d</option>' for p in USAGE_PRESETS)
+    intervals = []
+    for k in USAGE_INTERVALS:
+        cls = "interval" + (" on" if k == "auto" else "") + (" eff" if k == interval else "")
+        disabled = " disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""
+        title = ("hourly up to a month, daily up to 26 weeks, then weekly" if k == "auto"
+                 else f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer" if k == "hour"
+                 else f"one bar per {k}")
+        intervals.append(f'<button type="button" class="{cls}" data-i="{k}"{disabled} '
+                         f'title="{esc(title)}">{k}</button>')
+    grid = "".join(f'<i style="left:{(j + 0.5) / len(buckets) * 100:.3f}%"></i>'
+                   for j, _ in _ticks(series, interval, buckets))
+    labels = "".join(
+        f'<span style="left:{(j + 0.5) / len(buckets) * 100:.3f}%">{esc(label)}</span>'
+        for j, label in _ticks(series, interval, buckets))
+    last_active = max(j for j, bk in enumerate(buckets) if bk[1])
+    mini_vals = _binned(vals, USAGE_MINI_MAX_BARS)   # the minimap shows the whole history
+    iso_first, iso_last = series["first"], date.fromordinal(first_o + n - 1).isoformat()
+    payload = json.dumps(series, separators=(",", ":")).replace("</", "<\\/")
+    return (
+        '<section class="usage" id="usage">'
+        '<div class="uhead">'
+        f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
+        '<div class="uctl">'
+        f'<div class="seg uint" role="group" aria-label="plotting interval">{"".join(intervals)}</div>'
+        '<div class="urange">'
+        f'<input type="date" id="uFrom" aria-label="window start" value="{iso_first}" '
+        f'min="{iso_first}" max="{iso_last}"><span class="usep">&ndash;</span>'
+        f'<input type="date" id="uTo" aria-label="window end" value="{iso_last}" '
+        f'min="{iso_first}" max="{iso_last}">'
+        f'<span class="udays" id="uDays">&middot; {n} day{_s(n)}</span></div>'
+        f'<select class="uwin" id="uWin" aria-label="time range">{options}'
+        '<option value="all" selected>all</option>'
+        '<option value="custom" disabled hidden>custom</option></select></div></div>'
+        f'<div class="uro" id="uRo">{_readout_html(series, interval, buckets[last_active])}</div>'
+        '<div class="uchart">'
+        f'<span class="uy" id="uYTop" style="bottom:100%">{esc(_axis_cost(top))}</span>'
+        f'<span class="uy" id="uYMid" style="bottom:50%">{esc(_axis_cost(_half(top)))}</span>'
+        '<div class="uplot" id="uPlot" tabindex="0" '
+        'aria-label="usage over time; arrow keys step through bars">'
+        f'<div class="uvg" id="uVg">{grid}</div><i class="ugl" style="bottom:50%"></i>'
+        f'{_bars_html(vals, top, titles)}'
+        '<i class="uhov" id="uHov" hidden></i><i class="usel" id="uSel" hidden></i>'
+        '</div></div>'
+        f'<div class="uaxis" id="uAxis">{labels}</div>'
+        f'<div class="umini" id="uMini">{_bars_html(mini_vals, max(mini_vals))}'
+        '<div class="brush" id="uBrush" style="left:0%;width:100%">'
+        '<b class="grip l"></b><b class="grip r"></b></div></div>'
+        f'<div class="uminiaxis"><span>{esc(_fmt_day(first_o))}</span>'
+        f'<span>{esc(_fmt_day(first_o + n - 1))}</span></div>'
+        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag on the chart '
+        'to zoom in, or drag the minimap window to move or resize it.</p>'
+        f'<script type="application/json" id="usageData">{payload}</script>'
+        '</section>')
 
 
 def _session_tools(sessions):
@@ -682,10 +1199,16 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .range{font-size:12px;color:var(--dim);margin-top:12px}
 .range b{color:var(--ink);font-weight:600}
 .age{color:var(--faint);white-space:nowrap}
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 26px;margin-top:30px}
-.stat{border-top:1px solid var(--line);padding-top:9px}
-.stat .n{font-size:21px;font-weight:600;letter-spacing:-.02em}
-.stat .l{margin-top:2px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:26px}
+.usage+.stats{margin-top:14px}
+/* stat tiles; whole-pixel line heights keep the page below on the pixel grid */
+.stat{min-width:0;padding:12px 14px 11px;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px}
+.stat .l{line-height:14px}
+.stat .n{margin-top:4px;font-size:21px;line-height:28px;font-weight:600;letter-spacing:-.02em}
+.stat .d{margin-top:3px;font-size:11px;line-height:16px;color:var(--dim);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.stat .d b{color:var(--ink);font-weight:600}
 .meta-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:26px}
 .chip{font-size:11px;padding:3px 9px;border:1px solid var(--line);border-radius:4px;
   background:var(--panel);color:var(--dim);white-space:nowrap}
@@ -837,8 +1360,109 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing .tw{overflow-x:auto}
 .pricing .excl{margin-top:12px;color:var(--faint)}
 
+/* ---- usage explorer: a card with a toolbar, a day readout, a recessed daily
+   plot, and a minimap brush. --ugut holds the y labels and aligns the plot
+   and minimap columns. Line heights are whole pixels so the content below
+   stays on the pixel grid the screenshot baselines were captured on. ---- */
+.usage{--ugut:50px;margin-top:26px;padding:14px 18px 12px;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px}
+.uhead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+  gap:8px 18px;min-height:22px}
+/* the window itself is the range readout: two borderless date inputs */
+.urange{display:flex;align-items:center;gap:4px;font-size:12px;line-height:22px;
+  color:var(--faint);white-space:nowrap}
+.urange input{font:inherit;font-size:12px;font-weight:600;height:22px;padding:0 3px;
+  color:var(--ink);background:none;border:1px solid transparent;border-radius:4px;
+  cursor:pointer;-webkit-appearance:none;appearance:none;
+  transition:border-color .12s,background .12s}
+.urange input::-webkit-calendar-picker-indicator{display:none}
+.urange input:hover,.urange input:focus-visible{border-color:var(--line);
+  background:var(--panel2);outline:none}
+.udays{margin-left:4px}
+.uctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+/* in auto mode the interval in effect is underlined beside the "auto" choice */
+.seg button.eff{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--machine)}
+.seg{display:inline-flex;height:22px;border:1px solid var(--line);border-radius:5px;
+  background:var(--panel);overflow:hidden}
+.seg button{appearance:none;-webkit-appearance:none;border:0;border-left:1px solid var(--line);
+  background:none;padding:0 9px;font-size:11px;color:var(--dim);cursor:pointer;
+  white-space:nowrap;transition:color .12s,background .12s}
+.seg button:first-child{border-left:0}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--panel2);color:var(--ink)}
+.seg button:disabled{opacity:.4;cursor:default;color:var(--dim)}
+.seg button:focus-visible{outline:2px solid var(--machine);outline-offset:-2px}
+select.uwin{font:inherit;font-size:11px;height:22px;padding:0 4px 0 8px;color:var(--dim);
+  background:var(--panel);border:1px solid var(--line);border-radius:5px;cursor:pointer}
+select.uwin:hover{color:var(--ink)}
+select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
+/* day readout: the hovered day, or the pinned one, or the last active day */
+.uro{margin-top:12px;padding:6px 0 8px;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);font-size:11px;line-height:16px;color:var(--dim)}
+.uro-head{display:flex;justify-content:space-between;align-items:center;gap:8px;height:22px}
+.uro-head time{font-size:12px;font-weight:600;color:var(--ink)}
+.ubtn{font:inherit;font-size:10.5px;height:20px;padding:0 8px;color:var(--dim);
+  background:var(--panel2);border:1px solid var(--line);border-radius:4px;cursor:pointer;
+  transition:color .12s,border-color .12s}
+.ubtn:disabled{opacity:.4;cursor:default}
+.ubtn:not(:disabled):hover{color:var(--ink);border-color:var(--machine)}
+.ubtn:focus-visible{outline:2px solid var(--machine);outline-offset:1px}
+.uro-line{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.uro-k{display:inline-block;width:64px;font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--faint)}
+/* fixed cells, name left and value right, so a metric switch changes numbers in place */
+.ui{display:inline-flex;justify-content:space-between;gap:8px;width:176px;margin-right:12px;
+  vertical-align:top;font-variant-numeric:tabular-nums}
+.ui>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ui>span:last-child{flex-shrink:0}
+.uro b{color:var(--ink);font-weight:600}
+.uro .mdl{color:var(--machine)}
+.uro .mdl.fam-claude{color:var(--claude)}
+.uro .mdl.fam-gpt{color:var(--codex)}
+/* daily plot, recessed into the card */
+.uchart{position:relative;height:150px;margin-top:14px;padding-left:var(--ugut)}
+.uy{position:absolute;left:0;width:42px;text-align:right;font-size:10px;line-height:1;
+  white-space:nowrap;color:var(--faint);transform:translateY(50%);font-variant-numeric:tabular-nums}
+.uplot{position:relative;height:100%;background:var(--bg);border:1px solid var(--line);
+  border-radius:4px;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+.uplot:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.uvg i{position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.ugl{position:absolute;left:0;right:0;height:1px;background:var(--line)}
+.ubars{position:absolute;inset:0;display:grid;align-items:end;gap:0 2px;padding:0 1px}
+.ubars.dense{gap:0 1px}
+.ubars.packed{gap:0}
+.ubars i{display:block;width:100%;max-width:24px;justify-self:center;
+  background:var(--bar);border-radius:2px 2px 0 0;transition:background .12s}
+.ubars i.hot,.ubars i.pin{background:color-mix(in srgb,var(--bar) 55%,var(--ink))}
+.uhov{position:absolute;top:0;bottom:0;pointer-events:none;
+  background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.usel{position:absolute;top:0;bottom:0;pointer-events:none;
+  background:color-mix(in srgb,var(--ink) 10%,transparent);
+  border-left:1px solid var(--ink);border-right:1px solid var(--ink)}
+.uhov[hidden],.usel[hidden]{display:none}
+.uaxis{position:relative;height:16px;margin:5px 0 0 var(--ugut);font-size:10px;line-height:16px;
+  color:var(--faint)}
+.uaxis span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+/* minimap: the whole history, with the window shown above as a brush */
+.umini{position:relative;height:36px;margin:12px 0 0 var(--ugut);background:var(--bg);
+  border:1px solid var(--line);border-radius:4px;cursor:crosshair;touch-action:none;
+  -webkit-user-select:none;user-select:none}
+.umini .ubars{gap:0 1px}
+.umini .ubars i{border-radius:0;opacity:.4}
+.brush{position:absolute;top:-1px;bottom:-1px;box-sizing:border-box;cursor:grab;
+  background:color-mix(in srgb,var(--bar) 16%,transparent);
+  border-left:1.5px solid var(--ink);border-right:1.5px solid var(--ink)}
+.brush .grip{position:absolute;top:50%;width:5px;height:14px;margin-top:-7px;border-radius:3px;
+  background:var(--panel);border:1px solid var(--ink);cursor:ew-resize}
+.brush .grip.l{left:-4px}
+.brush .grip.r{right:-4px}
+.uminiaxis{display:flex;justify-content:space-between;margin:4px 0 0 var(--ugut);
+  font-size:10px;line-height:16px;color:var(--faint)}
+.uhelp{margin:8px 0 0;font-size:10.5px;line-height:16px;color:var(--faint)}
+
 @media (max-width:640px){
   .stats{grid-template-columns:repeat(2,1fr)}
+  .stat .d{white-space:normal;min-height:32px}   /* two reserved lines, so a wrap moves nothing */
   h1{font-size:30px}
   .log::before,.emark{display:none}
   .entry,.sess,.gapnote{padding-left:0}
@@ -1090,6 +1714,292 @@ if(refreshEls.length){
 """
 
 
+# Usage explorer: re-buckets the embedded series for the selected window and
+# interval and repaints the chart, brush, readout, and stat tiles. Number
+# formats mirror fmt_num, fmt_dur, fmt_cost, and _fmt_money so a recomputed
+# tile matches the server-rendered one for the same window.
+USAGE_JS = """
+(function(){
+const box=document.getElementById('usage'); if(!box) return;
+const D=JSON.parse(document.getElementById('usageData').textContent);
+const days=D.days, N=days.length, H=new Map(D.hours||[]), MS=86400000;
+const dayNum=iso=>{const [y,m,d]=iso.split('-').map(Number);return Math.round(Date.UTC(y,m-1,d)/MS);};
+const D0=dayNum(D.first);
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const dateOf=i=>new Date((D0+i)*MS);
+const isoOf=i=>dateOf(i).toISOString().slice(0,10);
+const fmtDate=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate()+', '+d.getUTCFullYear();};
+const fmtShort=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCDate();};
+const fmtMonYear=i=>{const d=dateOf(i);return MON[d.getUTCMonth()]+' '+d.getUTCFullYear();};
+const fmtDow=i=>DOW[dateOf(i).getUTCDay()];
+const pad=h=>String(h).padStart(2,'0');
+const todayIdx=()=>{const t=new Date();return Math.round(Date.UTC(t.getFullYear(),t.getMonth(),t.getDate())/MS)-D0;};
+const clamp=i=>Math.max(0,Math.min(N-1,i));
+const s=n=>n===1?'':'s';
+const DOT=' \\u00b7 ', DASH='\\u2014', RANGE=' \\u2013 ';
+const loc=n=>Math.round(n).toLocaleString('en-US');
+const fmtNum=n=>n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n);
+const fmtDur=ms=>{if(!ms)return DASH;const sec=ms/1000;if(sec<60)return Math.round(sec)+'s';
+  const m=sec/60;if(m<60)return Math.round(m)+'m';const h=Math.floor(m/60);return h+'h '+Math.floor(m%60)+'m';};
+const fmtCost=d=>!d?'$0':d<1?'<$1':'$'+loc(d);
+const fmtMoney=d=>d>=100?'$'+loc(d):'$'+d.toFixed(2);
+const axisCost=v=>v<1?'$'+v.toFixed(2):'$'+loc(v);
+const axisDur=ms=>{const h=ms/36e5;return h>=1&&Number.isInteger(h)?h+'h':fmtDur(ms);};
+const nice=v=>{if(v<=0)return 1;const e=Math.pow(10,Math.floor(Math.log10(v)));
+  for(const m of [1,2,4,5,10]){if(m*e>=v-1e-9)return m*e;}return 10*e;};
+const niceMs=ms=>{const min=ms/6e4;if(min<=60){for(const m of [1,2,4,10,20,40,60])if(m>=min-1e-9)return m*6e4;}
+  return nice(min/60)*36e5;};
+const cleanModel=m=>m.replace(/claude-/g,'');
+const family=m=>{m=m.toLowerCase();if(/^(claude|opus|sonnet|haiku|fable)/.test(m))return 'claude';
+  if(/^(gpt|chatgpt|codex|o1|o3|o4)/.test(m))return 'gpt';return '';};
+// col: the column of a model's or project's [cost, tokens out, active ms] split
+const METRIC={
+  cost:{get:d=>d.c||0,nice:nice,axis:axisCost,col:0,fmt:fmtMoney},
+  tok:{get:d=>d.o||0,nice:nice,axis:fmtNum,col:1,fmt:fmtNum},
+  act:{get:d=>d.a||0,nice:niceMs,axis:axisDur,col:2,fmt:fmtDur}};
+const MAX_HOURLY_DAYS=31, AUTO_HOUR_MAX_DAYS=MAX_HOURLY_DAYS, AUTO_DAY_MAX_DAYS=182;
+const autoInterval=n=>n<=AUTO_HOUR_MAX_DAYS?'hour':n<=AUTO_DAY_MAX_DAYS?'day':'week';
+const $=id=>document.getElementById(id);
+const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), hov=$('uHov'), sel=$('uSel'), vg=$('uVg'), axis=$('uAxis');
+const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
+const yTop=$('uYTop'), yMid=$('uYMid'), daysEl=$('uDays');
+const fromIn=$('uFrom'), toIn=$('uTo'), winSel=$('uWin');
+const roDate=$('uRoDate'), ro1=$('uRo1'), ro2=$('uRo2'), ro3=$('uRo3'), pinBtn=$('uPin');
+const metrics=[...box.querySelectorAll('.metric')], intervals=[...box.querySelectorAll('.interval')];
+const tiles={}; document.querySelectorAll('.stat[data-k]').forEach(el=>{tiles[el.dataset.k]=el;});
+let metric='cost', interval='auto', A=0, B=N-1, hot=-1, pinned=-1, cur=[], eff='day';
+const effective=()=>interval==='auto'?autoInterval(B-A+1):interval;
+bars.querySelectorAll('i[title]').forEach(i=>i.removeAttribute('title'));   // the readout replaces native tooltips
+
+// ---- buckets: {k: key in the interval's index space, d: summed fields or null, from, to: day indices}
+const weekStart=i=>i-((dateOf(i).getUTCDay()+6)%7);               // Monday
+const addRow=(into,k,row)=>{ const r=into[k]||(into[k]=[0,0,0]); row.forEach((v,i)=>{r[i]+=v;}); };
+function merge(t,d){ t.s+=d.s||0; t.i+=d.i||0; t.a+=d.a||0; t.o+=d.o||0; t.c+=d.c||0; if(d.u)t.u=1;
+  for(const k in d.m||{}) addRow(t.m||(t.m={}),k,d.m[k]); for(const k in d.p||{}) addRow(t.p||(t.p={}),k,d.p[k]); return t; }
+function bucketsFor(iv,a,b){
+  const out=[];
+  if(iv==='day'){ for(let i=a;i<=b;i++) out.push({k:i,d:days[i],from:i,to:i}); }
+  else if(iv==='hour'){ for(let h=a*24;h<(b+1)*24;h++) out.push({k:h,d:H.get(h)||null,from:Math.floor(h/24),to:Math.floor(h/24)}); }
+  else { for(let ws=weekStart(a);ws<=b;ws+=7){ let t=null;
+    for(let i=Math.max(a,ws);i<=Math.min(b,ws+6);i++) if(days[i]) t=merge(t||{s:0,i:0,a:0,o:0,c:0},days[i]);
+    out.push({k:ws,d:t,from:Math.max(a,ws),to:Math.min(b,ws+6)}); } }
+  return out;
+}
+// the y scale is locked to the whole history for the metric and interval, so
+// a moving window never rescales the bars
+const scaleCache={};
+function scaleMax(){ const key=metric+'/'+eff; if(!(key in scaleCache)){ const M=METRIC[metric]; let v=0;
+  bucketsFor(eff,0,N-1).forEach(x=>{ if(x.d){const y=M.get(x.d); if(y>v)v=y;} }); scaleCache[key]=M.nice(v); } return scaleCache[key]; }
+const dens=n=>n>240?' packed':n>90?' dense':'';
+function paintBars(el,values,vmax){
+  const n=values.length; let h='';
+  for(const v of values) h+='<i style="height:'+(vmax?v/vmax*100:0).toFixed(2)+'%"></i>';
+  el.className='ubars'+dens(n); el.style.gridTemplateColumns='repeat('+n+',1fr)'; el.innerHTML=h;
+}
+// at most one bar per two pixels: wider histories fold into bins that show their peak
+function binned(values,maxBins){ if(values.length<=maxBins) return values; const g=Math.ceil(values.length/maxBins), out=[];
+  for(let i=0;i<values.length;i+=g) out.push(Math.max(...values.slice(i,i+g))); return out; }
+function sumWin(a,b){
+  const t={s:0,i:0,a:0,o:0,ti:0,cr:0,cw:0,c:0,u:false,days:0,streak:0,streakStart:-1,busy:-1,busyV:0,m:{}}; let run=0;
+  for(let i=a;i<=b;i++){const d=days[i]; if(!d){run=0;continue;}
+    run++; if(run>t.streak){t.streak=run;t.streakStart=i-run+1;} t.days++;
+    t.s+=d.s||0; t.i+=d.i||0; t.a+=d.a||0; t.o+=d.o||0; t.ti+=d.ti||0; t.cr+=d.cr||0; t.cw+=d.cw||0; t.c+=d.c||0;
+    if(d.u)t.u=true; if((d.a||0)>t.busyV){t.busyV=d.a;t.busy=i;}
+    for(const k in (d.m||{}))t.m[k]=(t.m[k]||0)+d.m[k][0];}
+  return t;
+}
+// ---- axis ticks: at most eight, anchored to midnight for hours and to the window start otherwise
+const stepFrom=(steps,n)=>steps.find(st=>n/st<=8)||steps[steps.length-1]*Math.ceil(n/8/steps[steps.length-1]);
+function ticks(){
+  const n=cur.length, out=[];
+  if(eff==='hour'){ const st=stepFrom([1,2,3,6,12,24,48,72,168,336],n);
+    cur.forEach((x,j)=>{ if(x.k%st===0) out.push([j,x.k%24===0?fmtShort(x.from):pad(x.k%24)+':00']); }); }
+  else if(eff==='week'){ const st=stepFrom([1,2,4,8,13,26,52],n);
+    for(let j=0;j<n;j+=st) out.push([j,st>=26?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
+  else { const st=stepFrom([1,2,7,14,30,60,90,180,365],n);
+    for(let j=0;j<n;j+=st) out.push([j,st>=60?fmtMonYear(cur[j].k):fmtShort(cur[j].k)]); }
+  return out;
+}
+function paintAxis(){
+  const n=cur.length, t=ticks(); let g='', l='';
+  t.forEach(([j])=>{const x=((j+0.5)/n*100).toFixed(3)+'%'; g+='<i style="left:'+x+'"></i>'; l+='<span style="left:'+x+'"></span>';});
+  vg.innerHTML=g; axis.innerHTML=l; t.forEach(([,label],k)=>{axis.children[k].textContent=label;});
+}
+function el(tag,cls,text){const e=document.createElement(tag); if(cls)e.className=cls; if(text!=null)e.textContent=text; return e;}
+function pairs(target,list){ list.forEach(([v,l],k)=>{ if(k) target.appendChild(document.createTextNode(DOT));
+  target.appendChild(el('b',null,v)); target.appendChild(document.createTextNode(' '+l)); }); }
+function setTile(k,n,label,detail){ const t=tiles[k]; if(!t) return;
+  t.querySelector('.n').textContent=n; if(label!=null) t.querySelector('.l').textContent=label;
+  const d=t.querySelector('.d'); d.textContent=''; if(typeof detail==='string') d.textContent=detail; else pairs(d,[detail]); }
+function paintTiles(){
+  const w=sumWin(A,B), n=B-A+1, plus=w.u?'+':'', pt=w.ti+w.cr+w.cw;
+  setTile('sessions',fmtNum(w.s),'session'+s(w.s),w.s?[(w.i/w.s).toFixed(1),'inputs per session']:DASH);
+  setTile('inputs',fmtNum(w.i),'input'+s(w.i),w.i?[fmtMoney(w.c/w.i)+plus,'per input']:DASH);
+  setTile('active',fmtDur(w.a),null,w.a?[fmtMoney(w.c/(w.a/36e5))+plus,'per active hour']:DASH);
+  setTile('tok',fmtNum(w.o),null,w.i?[fmtNum(Math.round(w.o/w.i)),'per input']:DASH);
+  setTile('days',fmtNum(w.days),'day'+s(w.days)+' active','of '+n+' day'+s(n));
+  setTile('cost',fmtCost(w.c)+plus,null,pt?[Math.round(w.cr/pt*100)+'%','cache hit rate']:DASH);
+  if(tiles.cost) tiles.cost.title=Object.entries(w.m).sort((x,y)=>y[1]-x[1]).map(([k,v])=>cleanModel(k)+' '+fmtCost(v)).join(DOT);
+  const st=w.streakStart, en=st+w.streak-1;
+  setTile('streak',w.streak+' day'+s(w.streak),null,!w.streak?DASH:w.streak===1?fmtShort(st):fmtShort(st)+RANGE+fmtShort(en));
+  setTile('busiest',w.busy>=0?fmtDur(w.busyV):DASH,null,w.busy>=0?fmtDow(w.busy)+DOT+fmtShort(w.busy):DASH);
+}
+// ---- readout: the hovered bucket, else the pinned one, else the window's last active bucket
+function head(x){
+  if(eff==='hour'){ const h=x.k%24; return fmtDow(x.from)+DOT+fmtDate(x.from)+DOT+pad(h)+':00'+'\\u2013'+pad((h+1)%24)+':00'; }
+  if(eff==='week') return fmtShort(x.from)+RANGE+fmtDate(x.to);
+  return fmtDow(x.k)+DOT+fmtDate(x.k);
+}
+// fixed-width cells, name left and value right, so a metric switch changes numbers in place
+function split(target,obj,model){ const key=target.firstChild, M=METRIC[metric]; target.textContent=''; target.appendChild(key);
+  const items=Object.entries(obj||{}).map(([k,row])=>[k,row[M.col]]).filter(([,v])=>v>0).sort((x,y)=>y[1]-x[1]);
+  items.slice(0,3).forEach(([k,v])=>{ const cell=el('span','ui');
+    cell.appendChild(el('span',model?'mdl fam-'+family(k):null,model?cleanModel(k):k));
+    cell.appendChild(el('span',null,M.fmt(v))); target.appendChild(cell); });
+  if(items.length>3) target.appendChild(el('span',null,'+'+(items.length-3)+' more')); }
+function lastActive(){ for(let j=cur.length-1;j>=0;j--) if(cur[j].d) return j; return cur.length-1; }
+function paintReadout(j){
+  const x=cur[j], d=x.d; roDate.textContent=head(x); ro1.textContent='';
+  if(!d) ro1.textContent='no activity';
+  else pairs(ro1,[[fmtMoney(d.c||0)+(d.u?'+':''),'est. API cost'],[fmtNum(d.o||0),'tokens out'],[fmtDur(d.a||0),'agent active'],
+    [String(d.i||0),'input'+s(d.i||0)],[String(d.s||0),'session'+s(d.s||0)+' started']]);
+  if(ro2) split(ro2,d&&d.m,true); if(ro3) split(ro3,d&&d.p,false);
+  pinBtn.disabled=pinned<0;
+}
+const pinIdx=()=>cur.findIndex(x=>x.k===pinned);
+function mark(){ const j=pinIdx(); [...bars.children].forEach((b,i)=>b.classList.toggle('pin',i===j)); }
+function setPin(key){ pinned=key; const j=pinIdx(); if(j<0) pinned=-1; mark(); paintReadout(j>=0?j:lastActive()); }
+function showBucket(j){
+  if(hot!==j){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=j; bars.children[j].classList.add('hot'); }
+  const n=cur.length; hov.hidden=false; hov.style.left=(j/n*100)+'%'; hov.style.width=(100/n)+'%';
+  paintReadout(j);
+}
+function leave(){ if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=-1; hov.hidden=true;
+  const j=pinIdx(); paintReadout(j>=0?j:lastActive()); }
+
+function presetOf(){                        // which preset the window equals, if any
+  if(A===0&&B===N-1) return 'all';
+  const t=clamp(todayIdx());
+  for(const o of winSel.options){const p=+o.value; if(p&&B===t&&A===Math.max(0,t-p+1)) return o.value;}
+  return null;
+}
+function paintIntervals(){ intervals.forEach(b=>{ b.classList.toggle('on',b.dataset.i===interval);
+  b.classList.toggle('eff',interval==='auto'&&b.dataset.i===eff); }); }
+function render(){
+  const M=METRIC[metric], n=B-A+1;
+  const hourly=intervals.find(b=>b.dataset.i==='hour'); if(hourly){ hourly.disabled=n>MAX_HOURLY_DAYS;
+    if(hourly.disabled&&interval==='hour'){ interval='day'; pinned=-1; } }
+  const was=eff; eff=effective(); if(eff!==was){ pinned=-1; renderMini(); } paintIntervals();
+  cur=bucketsFor(eff,A,B); const top=scaleMax();
+  paintBars(bars,cur.map(x=>x.d?M.get(x.d):0),top); hot=-1; hov.hidden=true;
+  yTop.textContent=M.axis(top); yMid.textContent=M.axis(top/2);
+  daysEl.textContent='\\u00b7 '+n+' day'+s(n);
+  brush.style.left=(A/N*100)+'%'; brush.style.width=(n/N*100)+'%';
+  winSel.value=presetOf()||'custom';
+  fromIn.value=isoOf(A); toIn.value=isoOf(B);
+  paintAxis(); paintTiles(); setPin(pinned);
+}
+// the minimap shows the whole history at the plotted interval, binned to the pixel grid
+function renderMini(){ const M=METRIC[metric];
+  const values=binned(bucketsFor(eff,0,N-1).map(x=>x.d?M.get(x.d):0),Math.max(1,Math.floor(mbars.getBoundingClientRect().width/2)));
+  paintBars(mbars,values,Math.max(...values)); }
+let miniTimer=0; addEventListener('resize',()=>{clearTimeout(miniTimer); miniTimer=setTimeout(renderMini,120);});
+function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
+// ---- the view lives in the query string as separate fields, defaults omitted:
+// ?range=30d or ?from=2026-03-01&to=2026-03-15, &metric=tok|act, &interval=hour|day|week.
+// A browser that refuses to rewrite a file URL's query gets the same fields in the fragment.
+function stateParams(){ const q=new URLSearchParams(), p=presetOf();
+  if(p&&p!=='all') q.set('range',p+'d'); else if(!p){ q.set('from',isoOf(A)); q.set('to',isoOf(B)); }
+  if(metric!=='cost') q.set('metric',metric); if(interval!=='auto') q.set('interval',interval); return q.toString(); }
+function syncUrl(){ const q=stateParams(), want=location.pathname+(q?'?'+q:'')+location.hash;
+  if(want===location.href.slice(location.origin.length)&&location.origin!=='null') return;
+  try{ history.replaceState(null,'',want); }
+  catch(e){ history.replaceState(null,'',location.pathname+location.search+(q?'#'+q:'')); } }
+function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1); else setWin(t-(+p)+1,t); }
+function setMetric(k){ if(k===metric) return; metric=k;
+  metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
+function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1; render(); }
+function readUrl(){
+  let q=new URLSearchParams(location.search); if(![...q.keys()].length) q=new URLSearchParams(location.hash.slice(1));
+  setMetric(METRIC[q.get('metric')]?q.get('metric'):'cost');
+  setIntervalMode(/^(auto|hour|day|week)$/.test(q.get('interval')||'')?q.get('interval'):'auto');
+  const pd=/^(\\d+)d$/.exec(q.get('range')||''), from=q.get('from'), to=q.get('to'), iso=/^\\d{4}-\\d{2}-\\d{2}$/;
+  if(from&&to&&iso.test(from)&&iso.test(to)) setWin(dayNum(from)-D0,dayNum(to)-D0);
+  else if(pd) applyPreset(pd[1]); else applyPreset('all');
+}
+
+// ---- controls
+winSel.addEventListener('change',()=>{ if(winSel.value==='custom') return;
+  applyPreset(winSel.value); winSel.value=presetOf()||'custom'; syncUrl(); });   // "7d" may already be "all"
+metrics.forEach(b=>b.addEventListener('click',()=>{setMetric(b.dataset.m); syncUrl();}));
+intervals.forEach(b=>b.addEventListener('click',()=>{ if(!b.disabled){setIntervalMode(b.dataset.i); syncUrl();} }));
+// a from-date past the to-date pulls the to-date along (and the reverse), never swaps them
+const onDate=e=>{ if(!fromIn.value||!toIn.value) return;
+  let a=dayNum(fromIn.value)-D0, b=dayNum(toIn.value)-D0;
+  if(a>b){ if(e.target===fromIn) b=a; else a=b; }
+  setWin(a,b); syncUrl(); };
+[fromIn,toIn].forEach(inp=>{ inp.addEventListener('change',onDate);
+  inp.addEventListener('click',()=>{ try{inp.showPicker();}catch(e){} }); });
+pinBtn.addEventListener('click',()=>setPin(-1));
+
+// ---- minimap brush: drag inside to move, an edge to resize, outside to draw anew
+let mode=null, x0=0, A0=0, B0=0;
+const idxAt=(x,el)=>{const r=el.getBoundingClientRect();return clamp(Math.floor((x-r.left)/r.width*N));};
+mini.addEventListener('pointerdown',e=>{
+  const r=mbars.getBoundingClientRect(); if(!r.width) return;
+  const lx=r.left+A/N*r.width, rx=r.left+(B+1)/N*r.width, x=e.clientX;
+  // moving a brush that already spans everything is a no-op, so draw anew instead
+  const whole=A===0&&B===N-1;
+  mode=Math.abs(x-lx)<=7?'l':Math.abs(x-rx)<=7?'r':(x>lx&&x<rx&&!whole)?'m':'n';
+  x0=x; A0=A; B0=B; mini.setPointerCapture(e.pointerId); e.preventDefault();
+  if(mode==='n'){const i=idxAt(x,mbars); setWin(i,i);}
+});
+mini.addEventListener('pointermove',e=>{ if(!mode) return;
+  const r=mbars.getBoundingClientRect(); if(!r.width) return;
+  const i=idxAt(e.clientX,mbars);
+  if(mode==='m'){ const span=B0-A0, a=Math.max(0,Math.min(N-1-span,A0+Math.round((e.clientX-x0)/r.width*N))); setWin(a,a+span); }
+  else if(mode==='l') setWin(Math.min(i,B),B);
+  else if(mode==='r') setWin(A,Math.max(i,A));
+  else { const j=idxAt(x0,mbars); setWin(Math.min(i,j),Math.max(i,j)); }
+});
+const endBrush=()=>{ if(mode){mode=null; syncUrl();} };
+mini.addEventListener('pointerup',endBrush); mini.addEventListener('pointercancel',endBrush);
+
+// ---- main chart: hover to inspect a bucket, click to pin it, drag across buckets to zoom in
+let drag=null;
+const colAt=x=>{const r=bars.getBoundingClientRect(), n=cur.length; return Math.max(0,Math.min(n-1,Math.floor((x-r.left)/r.width*n)));};
+plot.addEventListener('pointerdown',e=>{ drag={x0:e.clientX,moved:false}; plot.setPointerCapture(e.pointerId); });
+plot.addEventListener('pointermove',e=>{
+  const j=colAt(e.clientX);
+  if(drag){ if(Math.abs(e.clientX-drag.x0)>4) drag.moved=true;
+    if(drag.moved){ const n=cur.length, i=colAt(drag.x0), a=Math.min(i,j), b=Math.max(i,j);
+      sel.hidden=false; sel.style.left=(a/n*100)+'%'; sel.style.width=((b-a+1)/n*100)+'%';
+      if(hot>=0&&bars.children[hot]) bars.children[hot].classList.remove('hot'); hot=-1; hov.hidden=true; return; } }
+  showBucket(j);
+});
+plot.addEventListener('pointerup',e=>{
+  const j=colAt(e.clientX);
+  if(drag&&drag.moved){ const i=colAt(drag.x0), a=cur[Math.min(i,j)].from, b=cur[Math.max(i,j)].to; drag=null; sel.hidden=true;
+    setWin(a,b); syncUrl(); showBucket(colAt(e.clientX)); return; }   // the pointer is still over the (new) plot
+  if(drag){ const key=cur[j].k; setPin(pinned===key?-1:key); }
+  drag=null; sel.hidden=true;
+});
+plot.addEventListener('pointercancel',()=>{drag=null; sel.hidden=true;});
+plot.addEventListener('pointerleave',()=>{ if(!drag) leave(); });
+plot.addEventListener('keydown',e=>{
+  const at=pinIdx(), c=at>=0?at:lastActive(); let j;
+  if(e.key==='ArrowLeft') j=Math.max(0,c-1); else if(e.key==='ArrowRight') j=Math.min(cur.length-1,c+1);
+  else if(e.key==='Home') j=0; else if(e.key==='End') j=cur.length-1;
+  else if(e.key==='Escape') j=-1; else return;
+  e.preventDefault(); setPin(j>=0?cur[j].k:-1);
+});
+eff=effective(); cur=bucketsFor(eff,A,B); paintIntervals(); renderMini();
+readUrl();
+})();
+"""
+
+
 def _terminal_ask(m):
     """Render Claude's bash input/output wrappers as one compact terminal line."""
     parts = m.get("terminal") or {}
@@ -1201,16 +2111,21 @@ def render(tl, home=None, refreshed_at=None):
 
     real_models = list(s["models"])
     multi_model = len(real_models) > 1
-    # ---- hero
+    refreshed = refreshed_at or now_local()
+    # ---- hero: the usage explorer and the cards read the same daily series
+    series = _daily_series([(None, tl)], refreshed)
+    window = _series_window(series) if series else None
     stat_cards = _summary_stat_cards(
         sessions=s["sessions"],
         inputs=_input_count(s),
         active_ms=s["active_ms"],
         tokens_out=s["tokens_out"],
-        days_active=len(days_active),
+        days_active=window["days"] if window else len(days_active),
         by_model=s.get("tokens_by_model"),
+        series=series, window=window,
     )
     stats_html = _stat_cards_html(stat_cards)
+    usage_html = _usage_html(series) if series else ""
 
     chips = []
     for m in real_models:
@@ -1236,7 +2151,6 @@ def render(tl, home=None, refreshed_at=None):
                          if session["id"] in sess_agg]
     total = len(rendered_sessions)
 
-    refreshed = refreshed_at or now_local()
     range_html = ""
     if first:
         n_days = (last_dt.date() - first_dt.date()).days + 1 if first_dt and last_dt else 1
@@ -1546,11 +2460,12 @@ def render(tl, home=None, refreshed_at=None):
         favicon=favicon_link(),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
-        css=CSS, js=JS + REFRESH_JS,
+        css=CSS, js=JS + REFRESH_JS + USAGE_JS,
         body_class=body_class,
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
         range=range_html,
+        usage=usage_html,
         stats=stats_html,
         chips="".join(chips),
         minimap=minimap, topbar=topbar,
@@ -1609,6 +2524,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
   <h1>Project logs</h1>
   <div class="path">{root}</div>
   <div class="range">{range}</div>
+  {usage}
   <div class="stats">{stats}</div>
   {costnote}
 </header>
@@ -1650,15 +2566,19 @@ def render_index(entries, refreshed_at=None, source_label=None):
         for m in tl["milestones"]
         if (d := parse_ts(m["ts"]))
     }
+    series = _daily_series([(tl["project_name"], tl) for _, tl in entries], refreshed)
+    window = _series_window(series) if series else None
     stat_cards = _summary_stat_cards(
         sessions=tot["sessions"],
         inputs=tot["inputs"],
         active_ms=tot["active"],
         tokens_out=tot["tok"],
-        days_active=len(all_days_active),
+        days_active=window["days"] if window else len(all_days_active),
         by_model=all_by_model,
+        series=series, window=window,
     )
     stats_html = _stat_cards_html(stat_cards)
+    usage_html = _usage_html(series) if series else ""
 
     rows = []
     for sub, tl in sorted(entries, key=lambda e: e[1]["stats"]["last_ts"] or "", reverse=True):
@@ -1703,12 +2623,13 @@ def render_index(entries, refreshed_at=None, source_label=None):
         range=(f'<b>{esc(fmt_date(gfirst))}</b> &rarr; <b>{esc(fmt_date(glast))}</b>'
                f' &middot; {len(entries)} projects'
                f' &middot; refreshed {refresh_stamp(refreshed, bold=True)}'),
+        usage=usage_html,
         stats=stats_html,
         gfirst=esc(fmt_date(gfirst)), glast=esc(fmt_date(glast)),
         rows="".join(rows),
         n=len(entries),
         refreshed=refresh_stamp(refreshed),
-        js=REFRESH_JS,
+        js=REFRESH_JS + USAGE_JS,
         costnote=cost_method_html(all_by_model, "all projects"),
     )
 
@@ -1726,6 +2647,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   <h1>{project}</h1>
   <div class="path">{path}</div>
   <div class="range">{range}</div>
+  {usage}
   <div class="stats">{stats}</div>
   <div class="meta-row">{chips}</div>
   {costnote}

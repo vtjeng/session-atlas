@@ -3,7 +3,10 @@
 session-atlas turns local Claude Code and Codex CLI transcripts into static HTML
 timelines.
 
-The project index summarizes activity across projects.
+The project index summarizes activity across projects. Its usage explorer
+charts est. API cost, tokens out, or agent active time by day. A window select,
+date inputs, and a minimap brush choose the days shown, and the summary tiles
+recompute for them.
 
 <p align="center"><img src="docs/images/project-index-preview.png" alt="Project index with an activity summary and two project cards" width="720"></p>
 
@@ -102,6 +105,36 @@ expanded API cost details, and session content.
 The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
+The usage explorer above the tiles charts one metric per hour, day, or week:
+est. API cost, tokens out, or agent active time, chosen on the left of the
+toolbar. The interval control on the right starts on `auto`, which plots
+hours for a window of 31 days or less, days up to 26 weeks, and weeks beyond,
+and underlines the interval in effect; `hour`, `day`, and `week` fix it, and
+hourly bars need a window of 31 days or fewer. The window select offers `7d`,
+`30d`, and `90d`, which end on the refresh day, and `all`; it reads `custom`
+after any other window. The two dates beside it are inputs, so a click on
+either opens a date picker. The y-axis is fixed to the whole history's peak
+for the chosen metric and interval, so moving the window never rescales the
+bars. The minimap under the chart is a brush: drag inside it to move the
+window, drag a grip to resize it, or drag on an empty part to draw a new one.
+Dragging across the chart itself zooms into the covered days.
+
+The readout between the toolbar and the chart inspects one bar: its cost,
+tokens, active time, inputs, and sessions started, then the top models and, on
+the index, the top projects by the plotted metric on their own lines, in
+fixed-width cells so a metric switch changes the numbers in place. Active
+time is recorded per entry, not per model, so the model line attributes each
+entry's active time to its most-used model. The readout follows the pointer, a
+click pins it to a bar, and the arrow keys step it while the chart has focus.
+Without a hover or a pin it shows the window's last active bar.
+
+The tiles below recompute for the selected window. Two tiles are new: the
+longest streak of consecutive active days, with its dates, and the day with
+the most agent active time. Each tile carries one derived figure: inputs per
+session, cost per input, cost per active hour, tokens out per input, the share
+of the window's days that were active, the share of prompt tokens served from
+cache, and the streak's and busiest day's dates.
+
 ![Project index summary including estimated API cost](docs/images/project-log-summary.png)
 
 ### Project index cards
@@ -115,8 +148,9 @@ represented in each project.
 ### Project overview
 
 An individual project page summarizes its sessions, activity, models, tools,
-and estimated API cost. An expandable panel explains the estimate and breaks it
-down by model and token category.
+and estimated API cost in the same tiles as the index. A project with activity
+on two or more days also gets the usage explorer. An expandable panel explains
+the estimate and breaks it down by model and token category.
 
 ![Individual project overview with activity statistics](docs/images/project-overview.png)
 
@@ -308,6 +342,28 @@ timing data is unavailable. The project index uses square-root-scaled bar
 heights for agent active time, with output tokens as the fallback when timing
 data is unavailable.
 
+The usage explorer buckets activity by local day, from the first activity
+through the refresh day, so a quiet week shows as empty days, and by local hour
+for the hourly view. An entry's tokens, cost, and active time are spread over
+the hours from its timestamp for its active duration, in proportion to the
+time in each hour, so a long task fills the hours it ran rather than the hour
+it started. The span is the entry's recorded active duration, so an idle gap
+inside one entry, such as a wait for approval, is not modeled. Inputs count in
+the starting hour, and a session counts in the day and hour of its first
+entry. Weekly bars start on Mondays and clip to the
+window. The minimap shows the whole history at the plotted interval, folded
+into at most one bar per two pixels, each showing its bin's peak, so a long
+history of hours reads as a density strip. Every page with an explorer
+mirrors its view in the URL's query string as separate fields, with defaults
+omitted: `?range=30d` or `?from=2026-03-01&to=2026-03-15` for the window,
+`metric=tok` or `metric=act` for tokens out or agent active time, and
+`interval=hour`, `interval=day`, or `interval=week`. A bookmarked URL such as
+`index.html?range=7d&metric=act&interval=hour` reopens that view, and the
+fragment still addresses entries on project pages. The page rewrites the
+query in place without reloading; a browser that refuses to do that for a
+`file://` URL gets the same fields in the fragment. Without JavaScript the
+explorer shows the whole history and the controls are inert.
+
 The generator renders timestamps in the local timezone of the machine that
 runs it. Transcript timestamps are stored in UTC.
 
@@ -390,6 +446,10 @@ verify that the generated pixels match the baselines:
 ```bash
 npm run test:visual
 ```
+
+The same command runs `tests/visual/usage.spec.js`, which drives the usage
+explorer with JavaScript enabled under a fixed clock and checks that the
+recomputed tiles match the server-rendered ones.
 
 An intentional visual change requires regenerating and reviewing the images
 before committing them. A failed visual check writes the actual, expected, and
