@@ -524,7 +524,7 @@ USAGE_METRICS = (("cost", "est. API cost"), ("tok", "tokens out"),
 USAGE_PRESETS = (7, 30, 90)
 USAGE_INTERVALS = ("auto", "hour", "day", "week")
 USAGE_MAX_HOURLY_DAYS = 31  # hourly bars need a window of a month or less
-USAGE_AUTO_HOUR_MAX_DAYS = 7    # "auto": hourly up to a week ...
+USAGE_AUTO_HOUR_MAX_DAYS = USAGE_MAX_HOURLY_DAYS   # "auto": hourly up to a month ...
 USAGE_AUTO_DAY_MAX_DAYS = 182   # ... daily up to 26 weeks, weekly beyond
 USAGE_MINI_MAX_BARS = 360   # the static minimap folds a longer history into bins
 USAGE_MIN_ACTIVE_DAYS = 2   # a one-day history has nothing to explore
@@ -962,7 +962,7 @@ def _usage_html(series):
     for k in USAGE_INTERVALS:
         cls = "interval" + (" on" if k == "auto" else "") + (" eff" if k == interval else "")
         disabled = " disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""
-        title = ("hourly up to a week, daily up to 26 weeks, then weekly" if k == "auto"
+        title = ("hourly up to a month, daily up to 26 weeks, then weekly" if k == "auto"
                  else f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer" if k == "hour"
                  else f"one bar per {k}")
         intervals.append(f'<button type="button" class="{cls}" data-i="{k}"{disabled} '
@@ -1758,7 +1758,7 @@ const METRIC={
   cost:{get:d=>d.c||0,nice:nice,axis:axisCost,col:0,fmt:fmtMoney},
   tok:{get:d=>d.o||0,nice:nice,axis:fmtNum,col:1,fmt:fmtNum},
   act:{get:d=>d.a||0,nice:niceMs,axis:axisDur,col:2,fmt:fmtDur}};
-const MAX_HOURLY_DAYS=31, AUTO_HOUR_MAX_DAYS=7, AUTO_DAY_MAX_DAYS=182;
+const MAX_HOURLY_DAYS=31, AUTO_HOUR_MAX_DAYS=MAX_HOURLY_DAYS, AUTO_DAY_MAX_DAYS=182;
 const autoInterval=n=>n<=AUTO_HOUR_MAX_DAYS?'hour':n<=AUTO_DAY_MAX_DAYS?'day':'week';
 const $=id=>document.getElementById(id);
 const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), hov=$('uHov'), sel=$('uSel'), vg=$('uVg'), axis=$('uAxis');

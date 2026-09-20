@@ -107,8 +107,12 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertEqual(details["tok"], "<b>15.6k</b> per input")
         self.assertEqual(details["sessions"], "<b>1.3</b> inputs per session")
         self.assertEqual(details["days"], "of 4 days")
-        self.assertEqual(details["streak"], "Mar 12")
-        self.assertEqual(details["busiest"], "Sun · Mar 15")
+        # The streak is the lone docs-site day and the busiest day is the
+        # example-project day, both named in the machine's local zone.
+        docs_day = parse_ts(entries[0][1]["milestones"][0]["ts"]).date()
+        example_day = parse_ts(entries[1][1]["milestones"][0]["ts"]).date()
+        self.assertEqual(details["streak"], docs_day.strftime("%b %-d"))
+        self.assertEqual(details["busiest"], example_day.strftime("%a · %b %-d"))
 
     def test_entry_usage_spreads_across_the_hours_it_ran(self):
         # A 90-minute entry starting at half past the hour puts one third of
@@ -157,16 +161,22 @@ class UsageSeriesTests(unittest.TestCase):
         hours = _buckets(series, "hour")
         weeks = _buckets(series, "week")
 
-        # Four days give 96 hourly bars, active only where the hours list is,
-        # and one Monday-based week clipped to the four fixture days.
+        # Four days give 96 hourly bars, active only where the hours list is.
         self.assertEqual(len(hours), 96)
         self.assertEqual([h for h, d, _, _ in hours if d], [idx for idx, _ in series["hours"]])
-        self.assertEqual(len(weeks), 1)
-        _, week, frm, to = weeks[0]
-        self.assertEqual((frm, to), (0, 3))
+        # Weeks start on Mondays and clip to the window: one week in a zone
+        # where the four days share it, two where they straddle a Monday. The
+        # first runs from day 0 to the Sunday or the last day, and the weeks
+        # together account for the whole window.
+        first_day = date.fromisoformat(series["first"])
+        mondays = {(first_day + timedelta(days=i)) - timedelta(days=(first_day + timedelta(days=i)).weekday())
+                   for i in range(4)}
+        self.assertEqual(len(weeks), len(mondays))
+        self.assertEqual(weeks[0][2:], (0, min(3, 6 - first_day.weekday())))
         window = _series_window(series)
-        self.assertEqual((week["s"], week["i"], week["o"]), (window["s"], window["i"], window["o"]))
-        self.assertAlmostEqual(week["c"], window["c"], places=3)
+        summed = {k: sum(w[1].get(k, 0) for w in weeks if w[1]) for k in ("s", "i", "o", "c")}
+        self.assertEqual((summed["s"], summed["i"], summed["o"]), (window["s"], window["i"], window["o"]))
+        self.assertAlmostEqual(summed["c"], window["c"], places=3)
 
     def test_window_summary_streak_and_busiest_day(self):
         # Three consecutive active days form the streak; the fourth active day
@@ -199,8 +209,8 @@ class UsageSeriesTests(unittest.TestCase):
         day_steps = (1, 2, 7, 14, 30, 60, 90, 180, 365)
         self.assertEqual([_step_from(day_steps, n) for n in (4, 8, 9, 30, 56, 57, 204, 3000)],
                          [1, 1, 2, 7, 7, 14, 30, 730])
-        # "auto" plots hours up to a week, days up to 26 weeks, then weeks.
-        self.assertEqual([_auto_interval(n) for n in (1, 7, 8, 182, 183)],
+        # "auto" plots hours up to a month, days up to 26 weeks, then weeks.
+        self.assertEqual([_auto_interval(n) for n in (1, 31, 32, 182, 183)],
                          ["hour", "hour", "day", "day", "week"])
         # A minimap folds 1,000 values into at most 360 bins of their peak.
         self.assertEqual(_binned([1, 5, 2, 9], 2), [5, 9])
@@ -245,9 +255,11 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertIn('class="interval eff" data-i="hour"', index_page)
         # Models and projects each get their own keyed readout line of
         # fixed-width cells.
-        self.assertIn('<div class="uro-line" id="uRo2"><span class="uro-k">models</span>'
-                      '<span class="ui"><span class="mdl fam-gpt">gpt-5.6-sol</span>'
-                      '<span>$0.72</span></span>', index_page)
+        # Which model leads the last hour depends on the zone's hour boundaries,
+        # so the cell is matched by structure: a family-colored name and a price.
+        self.assertRegex(index_page, r'<div class="uro-line" id="uRo2"><span class="uro-k">models</span>'
+                                     r'<span class="ui"><span class="mdl fam-(gpt|claude)">[^<]+</span>'
+                                     r'<span>\$\d\.\d\d</span></span>')
         # The project cell adds the four minutes of the /review entry that ran
         # past ten o'clock to the Codex session's $0.72, so it is matched loosely.
         self.assertRegex(index_page, r'<div class="uro-line" id="uRo3"><span class="uro-k">projects</span>'
