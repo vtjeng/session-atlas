@@ -226,10 +226,18 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertIn('id="usageData">{"first":', index_page)
         # A four-day history plots hourly under "auto": 96 bars, ticks every
         # twelve hours, and the readout resting on the last active hour. The
-        # window select starts on "all" with a hidden "custom" entry.
+        # expected labels come from the series because the hour and, in some
+        # zones, the day depend on the machine's local timezone.
+        series = _daily_series(
+            [("docs", entries[0][1]), ("example", entries[1][1])], refreshed)
+        first_day = date.fromisoformat(series["first"])
+        last_hour = series["hours"][-1][0]
+        last_day = first_day + timedelta(days=last_hour // 24)
+        h = last_hour % 24
         self.assertIn('style="grid-template-columns:repeat(96,1fr)"', index_page)
-        self.assertIn('<time id="uRoDate">Sun · Mar 15, 2026 · 10:00–11:00</time>', index_page)
-        self.assertIn('>Mar 12</span>', index_page)
+        self.assertIn(f'<time id="uRoDate">{last_day.strftime("%a · %b %-d, %Y")} · '
+                      f'{h:02d}:00–{(h + 1) % 24:02d}:00</time>', index_page)
+        self.assertIn(f'>{first_day.strftime("%b %-d")}</span>', index_page)
         self.assertIn('>12:00</span>', index_page)
         self.assertIn('<option value="all" selected>all</option>'
                       '<option value="custom" disabled hidden>custom</option>', index_page)
