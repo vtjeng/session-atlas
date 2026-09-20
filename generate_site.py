@@ -25,7 +25,7 @@ import re
 import tempfile
 import unicodedata
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -573,6 +573,36 @@ def _day_hour(ts):
     return (d.date().toordinal(), d.hour) if d else None
 
 
+def _hour_slices(ts, duration_ms):
+    """``[(day ordinal, hour, fraction)]`` for the local hours an entry's
+    activity spans, from its timestamp for its active duration."""
+    start = parse_ts(ts)
+    if not duration_ms or duration_ms <= 0:
+        return [(start.date().toordinal(), start.hour, 1.0)]
+    end = start + timedelta(milliseconds=duration_ms)
+    out, t = [], start
+    while t < end:
+        boundary = t.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        seg_end = min(boundary, end)
+        out.append((t.date().toordinal(), t.hour,
+                    (seg_end - t).total_seconds() * 1000 / duration_ms))
+        t = seg_end
+    return out
+
+
+def _spread(total, fractions):
+    """Split an integer total across slices by fraction, keeping the exact sum."""
+    out, assigned, cum = [], 0, 0.0
+    for f in fractions:
+        cum += f
+        target = round(total * cum)
+        out.append(target - assigned)
+        assigned = target
+    if out:
+        out[-1] += total - assigned
+    return out
+
+
 def _finish_bucket(b, keys):
     """Price a bucket's tokens and drop its zero fields for the JSON series.
 
@@ -606,8 +636,13 @@ def _daily_series(entries, refreshed):
     without any dated milestone. ``days`` is dense from the first activity
     through the refresh day. ``hours`` is sparse: ``[hour index, bucket]``
     pairs for active hours only, where the index counts hours from midnight
-    of the first day, without the cache fields only the daily tiles need. A
-    session counts in the day and hour of its first milestone.
+    of the first day, without the cache fields only the daily tiles need.
+
+    An entry's tokens, cost, and active time are spread over the hours from
+    its timestamp for its active duration, in proportion to the time in each
+    hour, so a long task fills the hours it ran rather than the hour it
+    started. Inputs count in the starting hour, and a session counts in the
+    day and hour of its first milestone.
     """
     buckets = {}   # (day ordinal, hour or None) -> accumulator
 
@@ -630,23 +665,31 @@ def _daily_series(entries, refreshed):
             # Active time is recorded per entry, not per model: attribute it to
             # the entry's most-used model, as the timeline's model chip does.
             dominant = max(a["models"], key=a["models"].get) if a.get("models") else None
-            cost = pricing.estimate_cost(a.get("tokens_by_model") or {})
-            for b in (bucket(when[0], None), bucket(*when)):
-                if m["kind"] in ("prompt", "command", "recovered"):
-                    b["i"] += 1
-                b["a"] += a["duration_ms"]
-                b["o"] += a["tokens_out"]
-                b["ti"] += a["tokens_in"]
-                b["cr"] += a["cache_read"]
-                b["cw"] += a["cache_create"]
-                merge_token_models(b["by_model"], a.get("tokens_by_model"))
-                if dominant and a["duration_ms"]:
-                    b["ma"][dominant] = b["ma"].get(dominant, 0) + a["duration_ms"]
-                if multi and (cost or a["tokens_out"] or a["duration_ms"]):
-                    row = b["p"].setdefault(label, [0.0, 0, 0])
-                    row[0] += cost
-                    row[1] += a["tokens_out"]
-                    row[2] += a["duration_ms"]
+            slices = _hour_slices(m["ts"], a["duration_ms"])
+            fractions = [f for _, _, f in slices]
+            flat = {k: _spread(a[src], fractions) for k, src in (
+                ("a", "duration_ms"), ("o", "tokens_out"), ("ti", "tokens_in"),
+                ("cr", "cache_read"), ("cw", "cache_create"))}
+            per_model = {
+                mid: {k: _spread(v, fractions) for k, v in tk.items()}
+                for mid, tk in (a.get("tokens_by_model") or {}).items()}
+            for n, (o, h, _) in enumerate(slices):
+                slice_models = {mid: {k: v[n] for k, v in tk.items()}
+                                for mid, tk in per_model.items()}
+                cost = pricing.estimate_cost(slice_models)
+                for b in (bucket(o, None), bucket(o, h)):
+                    if n == 0 and m["kind"] in ("prompt", "command", "recovered"):
+                        b["i"] += 1
+                    for k, values in flat.items():
+                        b[k] += values[n]
+                    merge_token_models(b["by_model"], slice_models)
+                    if dominant and flat["a"][n]:
+                        b["ma"][dominant] = b["ma"].get(dominant, 0) + flat["a"][n]
+                    if multi and (cost or flat["o"][n] or flat["a"][n]):
+                        row = b["p"].setdefault(label, [0.0, 0, 0])
+                        row[0] += cost
+                        row[1] += flat["o"][n]
+                        row[2] += flat["a"][n]
         for session in tl["sessions"]:
             if _is_automated_codex(session):
                 continue
@@ -1752,8 +1795,10 @@ function render(){
   fromIn.value=isoOf(A); toIn.value=isoOf(B);
   paintAxis(); paintTiles(); setPin(pinned);
 }
-function renderMini(){ paintBars(mbars,days,METRIC[metric],scaleMaxDaily()); }
-function scaleMaxDaily(){ const M=METRIC[metric]; let v=0; days.forEach(d=>{ if(d){const y=M.get(d); if(y>v)v=y;} }); return v; }
+// the minimap shows the whole history by day, or by week in the weekly view;
+// a history of hours would be narrower than a pixel per bar
+function renderMini(){ const M=METRIC[metric], list=bucketsFor(interval==='week'?'week':'day',0,N-1).map(x=>x.d);
+  let v=0; list.forEach(d=>{ if(d){const y=M.get(d); if(y>v)v=y;} }); paintBars(mbars,list,M,v); }
 function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
 function syncUrl(){ if(!persist) return;
   const p=presetOf(); const r=p==='all'?'':p?p+'d':isoOf(A)+'..'+isoOf(B);
@@ -1765,7 +1810,7 @@ function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1);
 function setMetric(k){ if(k===metric) return; metric=k;
   metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
 function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1;
-  intervals.forEach(b=>b.classList.toggle('on',b.dataset.i===k)); render(); }
+  intervals.forEach(b=>b.classList.toggle('on',b.dataset.i===k)); renderMini(); render(); }
 function readUrl(){ if(!persist) return;            // "#30d", "#2026-03-01..2026-03-15", "#7d/act/hour"
   const m=/^#?([^/]*)(?:\\/(cost|tok|act))?(?:\\/(hour|day|week))?$/.exec(location.hash)||[];
   setMetric(m[2]||'cost'); setIntervalMode(m[3]||'day');
@@ -1965,7 +2010,7 @@ def render(tl, home=None, refreshed_at=None):
         inputs=_input_count(s),
         active_ms=s["active_ms"],
         tokens_out=s["tokens_out"],
-        days_active=len(days_active),
+        days_active=window["days"] if window else len(days_active),
         by_model=s.get("tokens_by_model"),
         series=series, window=window,
     )
@@ -2418,7 +2463,7 @@ def render_index(entries, refreshed_at=None, source_label=None):
         inputs=tot["inputs"],
         active_ms=tot["active"],
         tokens_out=tot["tok"],
-        days_active=len(all_days_active),
+        days_active=window["days"] if window else len(all_days_active),
         by_model=all_by_model,
         series=series, window=window,
     )

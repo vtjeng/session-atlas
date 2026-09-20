@@ -2,8 +2,9 @@ import os
 import shutil
 import tempfile
 import unittest
+from datetime import date, timedelta
 
-from ccx_parse import build_timeline
+from ccx_parse import _add_tokens, _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
 from generate_site import (_axis_cost, _daily_series, _merge_timelines, _nice,
                            _series_window, _tick_step, _tile_details, _usage_html,
@@ -107,6 +108,45 @@ class UsageSeriesTests(unittest.TestCase):
         self.assertEqual(details["days"], "of 4 days")
         self.assertEqual(details["streak"], "Mar 12")
         self.assertEqual(details["busiest"], "Sun · Mar 15")
+
+    def test_entry_usage_spreads_across_the_hours_it_ran(self):
+        # A 90-minute entry starting at half past the hour puts one third of
+        # its tokens, cost, and active time in the starting hour and two
+        # thirds in the next, while its input and session stay where it began.
+        # 300 uncached input and 3,000 output tokens on sonnet-5 give a cost
+        # that splits the same way.
+        ts = "2026-01-01T23:30:00.000Z"
+        entry = _new_milestone("prompt", "spread me", ts, "s1", "rec-1")
+        activity = entry["activity"]
+        activity["duration_ms"] = 5_400_000
+        activity["assistant_turns"] = 1
+        activity["models"]["claude-sonnet-5"] = 1
+        _add_tokens(activity, "claude-sonnet-5", 300, 3000, 0, 0)
+        timeline = {"sessions": [{"id": "s1", "last_ts": ts, "tool": "claude"}],
+                    "milestones": [entry]}
+        start = parse_ts(ts)
+
+        series = _daily_series([(None, timeline)], start + timedelta(hours=2))
+
+        first_o = date.fromisoformat(series["first"]).toordinal()
+        hour_of = lambda at: (at.date().toordinal() - first_o) * 24 + at.hour
+        hours = dict(series["hours"])
+        h0, h1 = hour_of(start), hour_of(start + timedelta(hours=1))
+        # The first slice runs to the next hour boundary in the local zone.
+        share = (60 - start.minute) / 90
+        self.assertEqual(sorted(hours), [h0, h1])
+        self.assertEqual(hours[h0]["o"], round(3000 * share))
+        self.assertEqual(hours[h1]["o"], 3000 - round(3000 * share))
+        self.assertEqual(hours[h0]["a"], round(5_400_000 * share))
+        self.assertAlmostEqual(hours[h0]["c"], (hours[h0]["c"] + hours[h1]["c"]) * share, places=3)
+        self.assertEqual(hours[h0]["m"]["claude-sonnet-5"][1:], [hours[h0]["o"], hours[h0]["a"]])
+        self.assertEqual((hours[h0]["i"], hours[h0]["s"]), (1, 1))
+        self.assertNotIn("i", hours[h1])
+        self.assertNotIn("s", hours[h1])
+        # The day buckets are the hour buckets summed, so the totals survive.
+        window = _series_window(series)
+        self.assertEqual((window["o"], window["a"], window["i"], window["s"]),
+                         (3000, 5_400_000, 1, 1))
 
     def test_window_summary_streak_and_busiest_day(self):
         # Three consecutive active days form the streak; the fourth active day

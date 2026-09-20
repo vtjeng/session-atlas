@@ -340,8 +340,15 @@ data is unavailable.
 
 The usage explorer buckets activity by local day, from the first activity
 through the refresh day, so a quiet week shows as empty days, and by local hour
-for the hourly view. A session counts in the day and hour of its first entry.
-Weekly bars start on Mondays and clip to the window. The index mirrors the
+for the hourly view. An entry's tokens, cost, and active time are spread over
+the hours from its timestamp for its active duration, in proportion to the
+time in each hour, so a long task fills the hours it ran rather than the hour
+it started. The span is the entry's recorded active duration, so an idle gap
+inside one entry, such as a wait for approval, is not modeled. Inputs count in
+the starting hour, and a session counts in the day and hour of its first
+entry. Weekly bars start on Mondays and clip to the
+window. The minimap shows the whole history by day, or by week in the weekly
+view. The index mirrors the
 selected window, metric, and interval in the URL fragment, for example `#30d`,
 `#2026-03-01..2026-03-15`, `#7d/act` for agent active time, or `#7d/act/hour`,
 so a bookmarked fragment reopens that view.

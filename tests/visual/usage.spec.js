@@ -97,18 +97,23 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   expect(await page.locator('#uPlot .ubars i').count()).toBe(24);
   const hourly = await readoutText(page);
   expect(hourly).toContain('Sun · Mar 15, 2026 · 10:00–11:00');
-  // With agent active time plotted, the splits are by active time too:
-  // the 10:00 hour holds the Codex session's nine estimated minutes.
-  // (innerText carries no space after the inline-block key.)
-  expect(await page.locator('#uRo2').innerText()).toMatch(/^MODELS\s*gpt-5\.6-sol 9m$/);
-  expect(await page.locator('#uRo3').innerText()).toMatch(/^PROJECTS\s*example-project 9m$/);
-  // Weekly bars: the four fixture days share one Monday-based week.
+  // With agent active time plotted, the splits are by active time too: the
+  // 10:00 hour holds the Codex session's nine estimated minutes plus the four
+  // minutes of the /review entry that ran past ten o'clock, since an entry's
+  // usage is spread over the hours it ran. (innerText carries no space after
+  // the inline-block key.)
+  expect(await page.locator('#uRo2').innerText()).toMatch(/^MODELS\s*gpt-5\.6-sol 9m · sonnet-5 4m$/);
+  expect(await page.locator('#uRo3').innerText()).toMatch(/^PROJECTS\s*example-project 13m$/);
+  // Weekly bars: the four fixture days share one Monday-based week, in the
+  // plot and in the minimap, which follows the interval.
   await page.click('.interval[data-i="week"]');
   await page.selectOption('#uWin', 'all');
   expect(await page.locator('#uPlot .ubars i').count()).toBe(1);
+  expect(await page.locator('#uMini .ubars i').count()).toBe(1);
   expect(await readoutText(page)).toContain('Mar 12 – Mar 15, 2026');
   expect(new URL(page.url()).hash).toBe('#/act/week');
   await page.click('.interval[data-i="day"]');
+  expect(await page.locator('#uMini .ubars i').count()).toBe(4);
 
   // Back to everything: the recomputed tiles equal the server render exactly,
   // the hash clears, and no state change moved the page.
