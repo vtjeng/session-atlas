@@ -910,8 +910,8 @@ def _readout_head(series, interval, bucket):
 
 def _readout_html(series, interval, bucket):
     """The inspection row for one bar: its totals, then the top models and,
-    on a multi-project series, the top projects by cost in fixed-width cells
-    so a metric switch changes the numbers in place."""
+    on a multi-project series, the top projects by cost, each name followed
+    by its value."""
     d = bucket[1]
     if not d:
         line1 = "no activity"
@@ -1464,11 +1464,9 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .uro-line{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .uro-k{display:inline-block;width:64px;font-size:9.5px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--faint)}
-/* fixed cells, name left and value right, so a metric switch changes numbers in place */
-.ui{display:inline-flex;justify-content:space-between;gap:8px;width:176px;margin-right:12px;
-  vertical-align:top;font-variant-numeric:tabular-nums}
-.ui>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ui>span:last-child{flex-shrink:0}
+/* an item is its name followed by its value; items flow along the line */
+.ui{display:inline-flex;gap:6px;margin-right:18px;vertical-align:top;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
 .uro b{color:var(--ink);font-weight:600}
 .uro .mdl{color:var(--machine)}
 .uro .mdl.fam-claude{color:var(--claude)}
@@ -2031,7 +2029,7 @@ function head(x){
   if(eff==='week') return fmtShort(x.from)+RANGE+fmtDate(x.to);
   return fmtDow(x.k)+DOT+fmtDate(x.k);
 }
-// fixed-width cells, name left and value right, so a metric switch changes numbers in place
+// an item is its name followed by its value; items flow along the line
 function split(target,obj,model){ const key=target.firstChild, M=METRIC[metric]; target.textContent=''; target.appendChild(key);
   const items=Object.entries(obj||{}).map(([k,row])=>[k,row[M.col]]).filter(([,v])=>v>0).sort((x,y)=>y[1]-x[1]);
   items.slice(0,3).forEach(([k,v])=>{ const cell=el('span','ui');
@@ -2307,8 +2305,8 @@ def render(tl, home=None, refreshed_at=None):
     stats_html = _stat_cards_html(stat_cards)
     usage_html = _usage_html(series) if series else ""
 
-    # models, tools, and parser notes as readout lines: a label, then one
-    # fixed-width cell per item with the name left and the count right
+    # models, tools, and parser notes as readout lines: a label, then each
+    # name followed by its count
     def meta_line(label, cells, title=None):
         attr = f' title="{esc(title)}"' if title else ""
         return (f'<div class="meta-line"{attr}><span class="uro-k">{label}</span>'

@@ -124,12 +124,12 @@ Dragging across the chart itself zooms into the covered days.
 
 The readout between the toolbar and the chart inspects one bar: its cost,
 tokens, active time, inputs, and sessions started, then the top models and, on
-the index, the top projects by the plotted metric on their own lines, in
-fixed-width cells so a metric switch changes the numbers in place. Active
-time is recorded per entry, not per model, so the model line attributes each
-entry's active time to its most-used model. The readout follows the pointer, a
-click pins it to a bar, and the arrow keys step it while the chart has focus.
-Without a hover or a pin it shows the window's last active bar.
+the index, the top projects by the plotted metric on their own lines, each name
+followed by its value. Active time is recorded per entry, not per model, so the
+model line attributes each entry's active time to its most-used model. The
+readout follows the pointer, a click pins it to a bar, and the arrow keys step
+it while the chart has focus. Without a hover or a pin it shows the window's
+last active bar.
 
 The tiles below recompute for the selected window. Two tiles are new: the
 longest streak of consecutive active days, with its dates, and the day with
