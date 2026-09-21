@@ -129,7 +129,10 @@ followed by its value. Active time is recorded per entry, not per model, so the
 model line attributes each entry's active time to its most-used model. The
 readout follows the pointer, a click pins it to a bar, and the arrow keys step
 it while the chart has focus. Without a hover or a pin it shows the window's
-last active bar.
+last active bar. The `?` button at the top right of the index summary lists
+these keys and gestures.
+
+![The shortcuts dialog on the index, listing the chart keys](docs/images/shortcuts-index.png)
 
 The tiles below recompute for the selected window. Two tiles are new: the
 longest streak of consecutive active days, with its dates, and the day with

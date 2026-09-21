@@ -59,9 +59,9 @@ test('the ? key and the ? button open and close the dialog on a project page', a
   await page.click('#shelp');
   await page.mouse.click(5, 5);
   expect(await isOpen(page)).toBe(false);
-  // The fixture project has two sessions, a ribbon, a rail, and one day of
-  // activity: sessions, the top bar, and the page are listed, the chart is not.
-  expect(await groups(page)).toEqual(['Sessions', 'Top bar', 'Page']);
+  // The fixture project has two sessions, a ribbon, and one day of activity:
+  // the keys, the top bar, and the share glyph are listed, the chart is not.
+  expect(await groups(page)).toEqual(['Keyboard', 'Top bar', 'Share']);
   expect(await page.locator('#help .kribbon').count()).toBe(1);
   expect(await page.locator('#help .share').count()).toBe(1);
   expect(await page.locator('#help').innerHTML()).toContain('<kbd>j</kbd> <kbd>k</kbd>');

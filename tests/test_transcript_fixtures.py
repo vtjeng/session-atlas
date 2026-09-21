@@ -108,8 +108,9 @@ class TranscriptFixtureTests(unittest.TestCase):
         # s and the header click are.
         self.assertIn('<button type="button" class="shelp" id="shelp"', one_session)
         self.assertIn('<dialog class="help" id="help"', one_session)
-        self.assertIn("<h3>Sessions</h3>", one_session)
+        self.assertIn("<h3>Keyboard</h3>", one_session)
         self.assertIn("<h3>Top bar</h3>", one_session)
+        self.assertIn("<h3>Share</h3>", one_session)
         self.assertIn("<dt><kbd>s</kbd></dt>", one_session)
         self.assertNotIn("<kbd>j</kbd>", one_session)
         self.assertNotIn("&lsaquo;</span>", one_session.split('<dialog', 1)[1])
@@ -126,7 +127,7 @@ class TranscriptFixtureTests(unittest.TestCase):
         index = render_index([("example", build_timeline(claude_dir))])
         self.assertIn('<button type="button" class="shelp" id="shelp"', index)
         self.assertIn('<dialog class="help" id="help"', index)
-        self.assertNotIn("<h3>Sessions</h3>", index)
+        self.assertNotIn("<h3>Keyboard</h3>", index)
         self.assertNotIn("<h3>Chart</h3>", index)
 
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):

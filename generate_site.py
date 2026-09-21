@@ -82,54 +82,48 @@ def help_button():
             ' aria-label="shortcuts">?</button>')
 
 
-def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=False):
+def help_html(*, project, stepper=False, explorer=False, ribbon=False):
     """The shortcuts dialog for one page, listing only the groups the page has.
 
     ``project`` is a project page (the index has no sessions); ``stepper``
     means more than one session, so j and k and the fold-all caret exist;
-    ``explorer`` means the usage explorer rendered; ``ribbon`` and ``rail``
-    mean the time ribbon and the right-hand minimap rendered.
+    ``explorer`` means the usage explorer rendered; ``ribbon`` means the time
+    ribbon rendered.
     """
     groups = []
     btn = '<span class="kbtn" aria-hidden="true">{}</span>'
     if project:
         rows = []
         if stepper:
-            rows.append(("<kbd>j</kbd> <kbd>k</kbd>", "next and previous session"))
-        rows.append(("<kbd>s</kbd>",
-                     "share the session at the reading line, the one just under the top bar"))
-        rows.append(("click a session header", "collapse or expand that session"))
-        rows.append(('<span class="share kicon" role="img" aria-label="the share glyph"></span>',
-                     "download that session or entry as a page"))
-        groups.append(("Sessions", rows))
+            rows.append(("<kbd>j</kbd> <kbd>k</kbd>", "next / previous session"))
+        rows.append(("<kbd>s</kbd>", "share session"))
+        groups.append(("Keyboard", rows))
         # the top bar's controls, shown as they look there
-        rows = [('<span class="kname">project name</span>', "click it: top of the page"),
-                ('<span class="ktitle">session title</span>', "click it: top of that session")]
+        rows = [('<span class="kname">project name</span>', "top of page"),
+                ('<span class="ktitle">session title</span>', "top of session")]
         if ribbon:
             rows.append(('<span class="kribbon" role="img" aria-label="the ribbon">'
-                         '<i></i><i></i><i></i></span>',
-                         "click the ribbon: the nearest entry in time"))
+                         '<i></i><i></i><i></i></span>', "nearest entry"))
         if stepper:
             rows.append((btn.format("&lsaquo;") + " " + btn.format("&rsaquo;"),
-                         "previous and next session"))
-            rows.append((btn.format("&#9662;"), "collapse or expand every session"))
+                         "previous / next session"))
+            rows.append((btn.format("&#9662;"), "collapse / expand all"))
         rows.append((btn.format("?"), "this list"))
         groups.append(("Top bar", rows))
+        groups.append(("Share", [
+            ('<span class="share kicon" role="img" aria-label="the share glyph"></span>',
+             "share session / entry")]))
     if explorer:
         # the keys act while the chart has focus; a click on a bar pins it and
         # focuses the chart, so it is listed first and the note says so
         groups.append(("Chart", [
-            ("click a bar", "pin the readout to it (this also focuses the chart)"),
-            ("<kbd>&larr;</kbd> <kbd>&rarr;</kbd>",
-             "step the pinned bar; with nothing pinned, start from the last active bar"),
-            ("<kbd>Home</kbd> <kbd>End</kbd>", "first and last bar"),
+            ("click a bar", "pin"),
+            ("<kbd>&larr;</kbd> <kbd>&rarr;</kbd>", "previous / next bar"),
+            ("<kbd>Home</kbd> <kbd>End</kbd>", "first / last bar"),
             ("<kbd>Esc</kbd>", "unpin"),
-            ("drag across the chart", "zoom the window to those bars"),
-            ("drag the strip below the chart", "move or resize the window"),
+            ("drag across the chart", "zoom"),
+            ("drag the strip below", "move / resize the window"),
         ]))
-    if project and rail:
-        groups.append(("Page", [
-            ("drag the rail at the right edge", "scroll the page, on wide screens")]))
     notes = {"Chart": "The keys act while the chart has focus: click a bar, or tab to the chart."}
     sections = "".join(
         f'<section><h3>{title}</h3>'
@@ -2790,7 +2784,7 @@ def render(tl, home=None, refreshed_at=None):
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS + USAGE_JS + HELP_JS,
         help=help_html(project=True, stepper=total > 1, explorer=bool(usage_html),
-                       ribbon=bool(ribbon), rail=bool(minimap)),
+                       ribbon=bool(ribbon)),
         body_class=body_class,
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
