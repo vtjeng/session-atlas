@@ -354,6 +354,9 @@ that holds that session or that entry with the atlas's styling. An entry's
 button shows on the entry at the reading line, the one just under the sticky
 bar, on any entry under the pointer or with keyboard focus, and on every entry
 on a touch screen. Press `s` to share the session at the reading line.
+
+![The share glyph after a session's badges, and under the clock of the entry at the reading line](docs/images/share-control.png)
+
 The file is named after the project and the session, with the entry's local
 date and time appended for an entry. It carries no script: the expandable logs
 and the session fold work through the browser. Its tab icon is the atlas's
