@@ -154,6 +154,22 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(height);
 });
 
+test('a phone-width plot draws days under auto and a two-line readout', async ({ page }) => {
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.clock.setFixedTime(FIXTURE_REFRESH);
+  await page.goto(pathToFileURL(path.join(siteDir, 'index.html')).href);
+  // The server drew 96 hourly bars for a wide plot. In a 282px plot each hour
+  // would get under 3px, so the first client render draws the four days.
+  await expect(page.locator('.interval.eff')).toHaveText('day');
+  await expect(page.locator('#uPlot .ubars i')).toHaveCount(4);
+  // Each readout line is two lines tall at a fixed 32px, so the frame stays put.
+  expect(Math.round((await page.locator('#uRo1').boundingBox()).height)).toBe(32);
+  // Widening the window brings the hourly bars back.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.locator('.interval.eff')).toHaveText('hour');
+  await expect(page.locator('#uPlot .ubars i')).toHaveCount(96);
+});
+
 test('the minimap brush and the chart drag select windows', async ({ page }) => {
   await page.clock.setFixedTime(FIXTURE_REFRESH);
   await page.goto(pathToFileURL(path.join(siteDir, 'index.html')).href + '?interval=day');

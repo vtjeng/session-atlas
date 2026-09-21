@@ -110,18 +110,19 @@ The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
 The usage explorer above the tiles charts one metric per hour, day, or week:
-est. API cost, tokens out, or agent active time, chosen from the select on
-the left of the toolbar. The interval control on the right starts on `auto`, which plots
-hours for a window of 31 days or less, days up to 26 weeks, and weeks beyond,
-and underlines the interval in effect; `hour`, `day`, and `week` fix it, and
-hourly bars need a window of 31 days or fewer. The window select offers `7d`,
-`30d`, and `90d`, which end on the refresh day, and `all`; it reads `custom`
-after any other window. The two dates beside it are inputs, so a click on
-either opens a date picker. The y-axis is fixed to the whole history's peak
-for the chosen metric and interval, so moving the window never rescales the
-bars. The minimap under the chart is a brush: drag inside it to move the
-window, drag a grip to resize it, or drag on an empty part to draw a new one.
-Dragging across the chart itself zooms into the covered days.
+est. API cost, tokens out, or agent active time, chosen from the select on the
+left of the toolbar. The interval control on the right starts on `auto`, which
+plots hours while the window is 31 days or less and each hour gets at least
+three pixels of plot, days up to 26 weeks, and weeks beyond, and underlines the
+interval in effect; `hour`, `day`, and `week` fix it, and hourly bars need a
+window of 31 days or fewer. The window select offers `7d`, `30d`, and `90d`,
+which end on the refresh day, and `all`; it reads `custom` after any other
+window. The two dates beside it are inputs, so a click on either opens a date
+picker. The y-axis is fixed to the whole history's peak for the chosen metric
+and interval, so moving the window never rescales the bars. The minimap under
+the chart is a brush: drag inside it to move the window, drag a grip to resize
+it, or drag on an empty part to draw a new one. Dragging across the chart
+itself zooms into the covered days.
 
 The readout between the toolbar and the chart inspects one bar: its cost,
 tokens, active time, inputs, and sessions started, then the top models and, on
