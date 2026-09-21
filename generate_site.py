@@ -76,6 +76,66 @@ def favicon_data_url(shared=False):
     return f"data:image/svg+xml,{quote(svg, safe='')}"
 
 
+def help_button():
+    """The ? button that opens the shortcuts dialog."""
+    return ('<button type="button" class="shelp" id="shelp" title="shortcuts (?)"'
+            ' aria-label="shortcuts">?</button>')
+
+
+def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=False):
+    """The shortcuts dialog for one page, listing only the groups the page has.
+
+    ``project`` is a project page (the index has no sessions); ``stepper``
+    means more than one session, so j and k and the fold-all caret exist;
+    ``explorer`` means the usage explorer rendered; ``ribbon`` and ``rail``
+    mean the time ribbon and the right-hand minimap rendered.
+    """
+    groups = []
+    if project:
+        rows = []
+        if stepper:
+            rows.append(("<kbd>j</kbd> <kbd>k</kbd>", "next and previous session"))
+        rows.append(("<kbd>s</kbd>",
+                     "share the session at the reading line, the one just under the sticky bar"))
+        rows.append(("click a session header", "collapse or expand that session"))
+        if stepper:
+            rows.append(("<span class=\"kglyph\">&#9662;</span> in the sticky bar",
+                         "collapse or expand every session"))
+        groups.append(("Sessions", rows))
+    if explorer:
+        groups.append(("Chart", [
+            ("<kbd>&larr;</kbd> <kbd>&rarr;</kbd>",
+             "step the readout one bar, while the chart has focus (click it or tab to it)"),
+            ("<kbd>Home</kbd> <kbd>End</kbd>", "first and last bar"),
+            ("<kbd>Esc</kbd>", "unpin the readout"),
+            ("click a bar", "pin the readout to it"),
+            ("drag across the chart", "zoom the window to those bars"),
+            ("drag the strip below the chart", "move or resize the window"),
+        ]))
+    if project:
+        rows = []
+        if ribbon:
+            rows.append(("click the ribbon under the sticky bar",
+                         "jump to the nearest entry in time"))
+        if rail:
+            rows.append(("drag the rail at the right edge", "scroll the page, on wide screens"))
+        rows.append(("click the project name, or the session title",
+                     "top of the page, or top of that session"))
+        rows.append(("the share glyph", "download that session or entry as a page"))
+        groups.append(("Page", rows))
+    sections = "".join(
+        f'<section><h3>{title}</h3><dl>'
+        + "".join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)
+        + '</dl></section>' for title, rows in groups)
+    return ('<dialog class="help" id="help" aria-labelledby="helpTitle"><div class="help-box">'
+            '<div class="help-head"><h2 id="helpTitle">Shortcuts</h2>'
+            '<button type="button" class="help-close" id="helpClose" aria-label="close">'
+            '&times;</button></div>'
+            f'{sections}'
+            '<p class="help-foot"><kbd>?</kbd> opens this list &middot; <kbd>Esc</kbd> closes it</p>'
+            '</div></dialog>')
+
+
 def favicon_link():
     """Return the standalone-page favicon as an embedded SVG data URL."""
     return f'<link rel="icon" type="image/svg+xml" href="{favicon_data_url()}">'
@@ -1199,15 +1259,44 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-/* glyph buttons: prev/next, and the fold-all caret ahead of them */
-.snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+/* glyph buttons: prev/next, the fold-all caret ahead of them, and the ? that opens
+   the shortcuts dialog (the sticky bar's right end on a project page, the hero's
+   top right on the index) */
+.snav,.sfold,.shelp{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
-.snav:hover,.sfold:hover{border-color:var(--machine);color:var(--ink)}
+.snav:hover,.sfold:hover,.shelp:hover{border-color:var(--machine);color:var(--ink)}
 .snav:disabled{opacity:.35;cursor:default}
-.snav:focus-visible,.sfold:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.snav:focus-visible,.sfold:focus-visible,.shelp:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .sessnav[hidden]{display:none}
+.tbtop .shelp{flex:0 0 auto}
+header.hero{position:relative}
+.hero>.shelp{position:absolute;right:0;top:22px}
+/* shortcuts dialog: ? or the ? button opens it; Esc, the close button, or a click
+   on the backdrop closes it. Keys are keycaps, gestures are plain text. */
+.help{padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  color:var(--ink);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
+.help::backdrop{background:color-mix(in srgb,var(--bg) 72%,transparent)}
+.help-box{padding:18px 22px 20px}
+.help-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.help h2{font-family:var(--serif);font-size:20px;font-weight:500;margin:0}
+.help-close{appearance:none;-webkit-appearance:none;border:0;background:none;padding:2px 6px;
+  border-radius:4px;color:var(--dim);font:inherit;font-size:18px;line-height:1;cursor:pointer}
+.help-close:hover{color:var(--ink)}
+.help-close:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.help h3{margin:14px 0 6px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--faint)}
+.help dl{display:grid;grid-template-columns:minmax(0,200px) 1fr;gap:6px 16px;margin:0;
+  font-size:12px;line-height:18px;color:var(--dim)}
+.help dt{color:var(--ink)}
+.help dd{margin:0}
+.help kbd{display:inline-block;min-width:18px;padding:0 5px;border:1px solid var(--line);
+  border-bottom-width:2px;border-radius:4px;background:var(--bg);font:inherit;font-size:11px;
+  line-height:16px;text-align:center;color:var(--ink)}
+.help .kglyph{color:var(--dim)}
+.help-foot{margin:16px 0 0;font-size:11px;color:var(--faint)}
+@media (max-width:640px){.help dl{grid-template-columns:1fr;gap:2px 0}.help dd{margin-bottom:6px}}
 
 /* ---- hero ---- */
 header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
@@ -1739,7 +1828,7 @@ if(sessions.length>1&&sessCur){
   dots.forEach(dt=>dt.addEventListener('click',()=>goTo(
     sessions.findIndex(session=>session.id===dt.dataset.s))));
   addEventListener('keydown',e=>{
-    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    if(e.metaKey||e.ctrlKey||e.altKey||document.querySelector('dialog[open]')) return;
     const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
     const k=e.key.toLowerCase();
     if(k==='j'){e.preventDefault();jump(1);} else if(k==='k'){e.preventDefault();jump(-1);}
@@ -1837,7 +1926,7 @@ if(logEl) logEl.addEventListener('click',e=>{
   shareBlock(block,b.dataset.share==='entry'?b.closest('.entry'):null);
 });
 addEventListener('keydown',e=>{                 // s: share the session at the reading line
-  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.metaKey||e.ctrlKey||e.altKey||document.querySelector('dialog[open]')) return;
   const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
   if(e.key.toLowerCase()!=='s') return;
   const block=sessions[curSessIdx]?.closest('details.session-block'); if(block){ e.preventDefault(); shareBlock(block,null); }
@@ -1858,6 +1947,23 @@ document.querySelectorAll('.ask.clip').forEach(el=>{
   el.addEventListener('click',()=>{el.classList.remove('clip');el.removeAttribute('title');});
 });
 buildMap();
+"""
+
+
+HELP_JS = """
+// ---- shortcuts dialog: ? or the ? button toggles it; the browser closes it on Esc,
+// and the close button or a click on the backdrop closes it too
+const help=document.getElementById('help');
+if(help&&help.showModal){
+  const toggleHelp=()=>{ if(help.open) help.close(); else help.showModal(); };
+  document.getElementById('shelp')?.addEventListener('click',toggleHelp);
+  document.getElementById('helpClose')?.addEventListener('click',()=>help.close());
+  help.addEventListener('click',e=>{ if(e.target===help) help.close(); });   // the backdrop
+  addEventListener('keydown',e=>{
+    if(e.metaKey||e.ctrlKey||e.altKey||e.key!=='?') return;
+    const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
+    e.preventDefault(); toggleHelp(); });
+}
 """
 
 
@@ -2431,7 +2537,7 @@ def render(tl, home=None, refreshed_at=None):
                   f'<span class="rdate">{esc(fmt_date_short(last))}</span></div>')
 
     topbar = (f'<div class="topbar"><div class="wrap">'
-              f'<div class="tbtop">{crumb}{stepper}</div>{ribbon}</div></div>')
+              f'<div class="tbtop">{crumb}{stepper}{help_button()}</div>{ribbon}</div></div>')
     minimap = ""
     body_class = "has-right-rail"
     if len(ms) <= MINIMAP_MAX_ENTRIES:
@@ -2660,7 +2766,9 @@ def render(tl, home=None, refreshed_at=None):
         shared_icon=favicon_data_url(shared=True),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
-        css=CSS, js=JS + REFRESH_JS + USAGE_JS,
+        css=CSS, js=JS + REFRESH_JS + USAGE_JS + HELP_JS,
+        help=help_html(project=True, stepper=total > 1, explorer=bool(usage_html),
+                       ribbon=bool(ribbon), rail=bool(minimap)),
         body_class=body_class,
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
@@ -2721,6 +2829,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
 <style>{css}</style></head><body>
 <div class="wrap">
 <header class="hero">
+  {help_button}
   <h1>Project logs</h1>
   <div class="path">{root}</div>
   <div class="range">{range}</div>
@@ -2732,6 +2841,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
 <div class="shelf">{rows}</div>
 <footer>{n} projects &middot; {provenance} &middot; refreshed {refreshed}</footer>
 </div>
+{help}
 <script>{js}</script>
 </body></html>"""
 
@@ -2829,7 +2939,9 @@ def render_index(entries, refreshed_at=None, source_label=None):
         rows="".join(rows),
         n=len(entries),
         refreshed=refresh_stamp(refreshed),
-        js=REFRESH_JS + USAGE_JS,
+        js=REFRESH_JS + USAGE_JS + HELP_JS,
+        help_button=help_button(),
+        help=help_html(project=False, explorer=bool(usage_html)),
         costnote=cost_method_html(all_by_model, "all projects"),
     )
 
@@ -2855,6 +2967,7 @@ PAGE = """<!doctype html><html lang="en"><head>
 <div class="log">{timeline}</div>
 <footer><span title="{input_count_title}">{n_inputs} input{input_suffix}</span> &middot; {provenance} &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
 </div>
+{help}
 <script>{js}</script>
 </body></html>"""
 

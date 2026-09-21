@@ -337,6 +337,12 @@ click or an entry link into a collapsed session expands it. Collapsed entries
 leave the minimap and the current-entry tracking, and when every session is
 collapsed the URL fragment names the session header at the reading line.
 
+Press `?`, or click the `?` button at the right end of the sticky bar, to
+open a list of the page's shortcuts and gestures; the index has the same
+button at the top right of its summary.
+
+![The shortcuts dialog on a project page](docs/images/shortcuts.png)
+
 The sticky bar shows the current session title. Use its previous and next
 buttons, or `j` and `k`, to move between sessions. Click the project name to
 return to the top, and click the session title to jump to that session. Click

@@ -127,6 +127,14 @@ const CAPTURE_PADDING = 24;
         'share-control.png',
         live,
       );
+      // The shortcuts dialog, opened with the ? key.
+      await live.mouse.move(0, 0);
+      await live.keyboard.press('?');
+      const help = live.locator('#help');
+      if (!(await help.evaluate(d => d.open))) {
+        throw new Error('The ? key did not open the shortcuts dialog');
+      }
+      await pad(await help.screenshot(), 'shortcuts.png', live);
     } finally {
       await live.close();
     }

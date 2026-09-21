@@ -11,7 +11,8 @@ import warnings
 from ccx_parse import _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
 from generate_site import (
-    _allocate_project_slugs, _merge_timelines, favicon_data_url, render)
+    _allocate_project_slugs, _merge_timelines, favicon_data_url, render,
+    render_index)
 
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
@@ -98,6 +99,34 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertEqual(len(_session_ids(merged)), 2)
         self.assertEqual(merged.count('<button class="sfold" id="sfold"'), 1)
 
+    def test_help_dialog_lists_the_shortcuts_the_page_has(self):
+        claude_dir = os.path.join(
+            FIXTURES, "claude", "-home-demo-src-example-project")
+        one_session = render(build_timeline(claude_dir))
+        # Every page carries the ? button and the dialog. A one-session page
+        # has no stepper, so j and k and the fold-all caret are not listed;
+        # s and the header click are.
+        self.assertIn('<button type="button" class="shelp" id="shelp"', one_session)
+        self.assertIn('<dialog class="help" id="help"', one_session)
+        self.assertIn("<h3>Sessions</h3>", one_session)
+        self.assertIn("<dt><kbd>s</kbd></dt>", one_session)
+        self.assertNotIn("<kbd>j</kbd>", one_session)
+        self.assertNotIn("<h3>Chart</h3>", one_session)
+        codex = [
+            tl for tl in build_codex_timelines(
+                rollout_paths(os.path.join(FIXTURES, "codex")))
+            if tl["project_path"].rstrip("/") == "/home/demo/src/example-project"]
+        two_sessions = render(_merge_timelines([build_timeline(claude_dir), *codex]))
+        self.assertIn("<dt><kbd>j</kbd> <kbd>k</kbd></dt>", two_sessions)
+        # The index has no sessions. Built from one day of one project it has
+        # no usage explorer either, so no group at all; the fixture site's
+        # index, checked in the screenshot-site test, has the chart group.
+        index = render_index([("example", build_timeline(claude_dir))])
+        self.assertIn('<button type="button" class="shelp" id="shelp"', index)
+        self.assertIn('<dialog class="help" id="help"', index)
+        self.assertNotIn("<h3>Sessions</h3>", index)
+        self.assertNotIn("<h3>Chart</h3>", index)
+
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:
             site = os.path.join(tmp, "site")
@@ -144,6 +173,10 @@ class TranscriptFixtureTests(unittest.TestCase):
                     f'<a class="proj" href="{fixture_project_slug}/index.html">',
                     index,
                 )
+            # Four days of activity give the index a usage explorer, so its
+            # shortcuts dialog lists the chart keys.
+            self.assertIn("<h3>Chart</h3>", index)
+            self.assertIn("<dt><kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt>", index)
             # The Claude-only docs-site card has one input and one changed file.
             self.assertIn('<b>1</b> input</span>', index)
             self.assertIn('<b>1</b> file</span>', index)
