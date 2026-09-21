@@ -1260,17 +1260,18 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 .session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
-/* share: a label that downloads a standalone page of its session or entry. The
-   session's sits at the right end of the header's label row; an entry's sits under
-   its clock in the gutter, shown on hover or focus (always where hover is absent). */
-.share{appearance:none;-webkit-appearance:none;border:0;background:none;padding:0;
-  cursor:pointer;font:inherit;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--faint);transition:color .12s}
-.share:hover,.share:focus-visible{color:var(--machine);outline:none;text-decoration:underline}
-summary.sess .share{position:absolute;right:0;top:20px;line-height:15px}
-.entry .share{position:absolute;left:0;top:20px;width:52px;text-align:right;opacity:0}
-.entry:hover .share,.entry:focus-within .share{opacity:1}
-@media (hover:none){.entry .share{opacity:1}}
+/* share: a pill that downloads a standalone page of its session or entry. It has
+   the badge geometry and the stepper buttons' border, so it reads as a control next
+   to the faint labels. The session's sits at the right end of the header's label
+   row; an entry's sits under its clock, filling the clock's column. */
+.share{appearance:none;-webkit-appearance:none;box-sizing:border-box;padding:1px 6px;
+  border:1px solid var(--line);border-radius:4px;background:var(--panel);cursor:pointer;
+  font:inherit;font-size:9px;line-height:14px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--dim);transition:border-color .12s,color .12s}
+.share:hover,.share:focus-visible{border-color:var(--machine);color:var(--ink)}
+.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+summary.sess .share{position:absolute;right:0;top:19px}
+.entry .share{position:absolute;left:0;top:22px;width:52px;text-align:center}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1493,7 +1494,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry,.sess,.gapnote{padding-left:0}
   summary.sess::before{position:static;display:inline-block;margin-right:8px}
   summary.sess::after{display:none}
-  .entry .share{left:auto;right:0;top:0;width:auto}   /* top right, on the clock's line */
+  .entry .share{left:auto;right:0;top:-1px;width:auto}   /* top right, on the clock's line */
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
