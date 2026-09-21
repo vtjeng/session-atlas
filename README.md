@@ -129,7 +129,10 @@ followed by its value. Active time is recorded per entry, not per model, so the
 model line attributes each entry's active time to its most-used model. The
 readout follows the pointer, a click pins it to a bar, and the arrow keys step
 it while the chart has focus. Without a hover or a pin it shows the window's
-last active bar.
+last active bar. The `?` button at the top right of the index summary lists
+these keys and gestures.
+
+![The shortcuts dialog on the index, listing the chart keys](docs/images/shortcuts-index.png)
 
 The tiles below recompute for the selected window. Two tiles are new: the
 longest streak of consecutive active days, with its dates, and the day with
@@ -328,7 +331,7 @@ not depend on the session or entry display numbers, so adding another tracked
 conversation does not retarget an existing link.
 
 Click a session header to collapse the session to its title and totals, and
-click it again to expand it. The caret at the left of the sticky bar's stepper
+click it again to expand it. The caret at the left of the top bar's stepper
 collapses every session or expands them all, and keeps the current session's
 header in place on screen while the rest of the page shrinks or grows. The
 page stores which sessions are collapsed in the browser's local storage, keyed
@@ -337,7 +340,13 @@ click or an entry link into a collapsed session expands it. Collapsed entries
 leave the minimap and the current-entry tracking, and when every session is
 collapsed the URL fragment names the session header at the reading line.
 
-The sticky bar shows the current session title. Use its previous and next
+Press `?`, or click the `?` button at the right end of the top bar, to
+open a list of the page's shortcuts and gestures; the index has the same
+button at the top right of its summary.
+
+![The shortcuts dialog on a project page](docs/images/shortcuts.png)
+
+The top bar shows the current session title. Use its previous and next
 buttons, or `j` and `k`, to move between sessions. Click the project name to
 return to the top, and click the session title to jump to that session. Click
 the top ribbon to jump to the nearest timeline entry on its chronological axis.

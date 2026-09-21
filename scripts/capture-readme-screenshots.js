@@ -127,8 +127,34 @@ const CAPTURE_PADDING = 24;
         'share-control.png',
         live,
       );
+      // The shortcuts dialog, opened with the ? key.
+      await live.mouse.move(0, 0);
+      await live.keyboard.press('?');
+      const help = live.locator('#help');
+      if (!(await help.evaluate(d => d.open))) {
+        throw new Error('The ? key did not open the shortcuts dialog');
+      }
+      await pad(await help.screenshot(), 'shortcuts.png', live);
     } finally {
       await live.close();
+    }
+
+    // The index's dialog, which lists the chart keys.
+    const liveIndex = await browser.newPage({
+      viewport: { width: 1440, height: 900 },
+      javaScriptEnabled: true,
+    });
+    try {
+      await liveIndex.goto(siteUrl('index.html'));
+      await liveIndex.mouse.move(0, 0);
+      await liveIndex.keyboard.press('?');
+      const help = liveIndex.locator('#help');
+      if (!(await help.evaluate(d => d.open))) {
+        throw new Error('The ? key did not open the shortcuts dialog on the index');
+      }
+      await pad(await help.screenshot(), 'shortcuts-index.png', liveIndex);
+    } finally {
+      await liveIndex.close();
     }
 
     const pricing = await requireFirstElement('details.pricing', 'the cost breakdown');

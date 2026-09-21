@@ -76,6 +76,69 @@ def favicon_data_url(shared=False):
     return f"data:image/svg+xml,{quote(svg, safe='')}"
 
 
+def help_button():
+    """The ? button that opens the shortcuts dialog."""
+    return ('<button type="button" class="shelp" id="shelp" title="shortcuts (?)"'
+            ' aria-label="shortcuts">?</button>')
+
+
+def help_html(*, project, stepper=False, explorer=False, ribbon=False):
+    """The shortcuts dialog for one page, listing only the groups the page has.
+
+    ``project`` is a project page (the index has no sessions); ``stepper``
+    means more than one session, so j and k and the fold-all caret exist;
+    ``explorer`` means the usage explorer rendered; ``ribbon`` means the time
+    ribbon rendered.
+    """
+    groups = []
+    btn = '<span class="kbtn" aria-hidden="true">{}</span>'
+    if project:
+        rows = []
+        if stepper:
+            rows.append(("<kbd>j</kbd> <kbd>k</kbd>", "next / previous session"))
+        rows.append(("<kbd>s</kbd>", "share session"))
+        groups.append(("Keyboard", rows))
+        # the top bar's controls, shown as they look there
+        rows = [('<span class="kname">project name</span>', "top of page"),
+                ('<span class="ktitle">session title</span>', "top of session")]
+        if ribbon:
+            rows.append(('<span class="kribbon" role="img" aria-label="the ribbon">'
+                         '<i></i><i></i><i></i></span>', "nearest entry"))
+        if stepper:
+            rows.append((btn.format("&lsaquo;") + " " + btn.format("&rsaquo;"),
+                         "previous / next session"))
+            rows.append((btn.format("&#9662;"), "collapse / expand all"))
+        rows.append((btn.format("?"), "this list"))
+        groups.append(("Top bar", rows))
+        groups.append(("Share", [
+            ('<span class="share kicon" role="img" aria-label="the share glyph"></span>',
+             "share session / entry")]))
+    if explorer:
+        # the keys act while the chart has focus; a click on a bar pins it and
+        # focuses the chart, so it is listed first and the note says so
+        groups.append(("Chart", [
+            ("click a bar", "pin"),
+            ("<kbd>&larr;</kbd> <kbd>&rarr;</kbd>", "previous / next bar"),
+            ("<kbd>Home</kbd> <kbd>End</kbd>", "first / last bar"),
+            ("<kbd>Esc</kbd>", "unpin"),
+            ("drag across the chart", "zoom"),
+            ("drag the strip below", "move / resize the window"),
+        ]))
+    notes = {"Chart": "The keys act while the chart has focus: click a bar, or tab to the chart."}
+    sections = "".join(
+        f'<section><h3>{title}</h3>'
+        + (f'<p class="help-note">{notes[title]}</p>' if title in notes else "")
+        + '<dl>' + "".join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)
+        + '</dl></section>' for title, rows in groups)
+    return ('<dialog class="help" id="help" aria-labelledby="helpTitle"><div class="help-box">'
+            '<div class="help-head"><h2 id="helpTitle">Shortcuts</h2>'
+            '<button type="button" class="help-close" id="helpClose" aria-label="close">'
+            '&times;</button></div>'
+            f'{sections}'
+            '<p class="help-foot"><kbd>?</kbd> opens this list &middot; <kbd>Esc</kbd> closes it</p>'
+            '</div></dialog>')
+
+
 def favicon_link():
     """Return the standalone-page favicon as an embedded SVG data URL."""
     return f'<link rel="icon" type="image/svg+xml" href="{favicon_data_url()}">'
@@ -1199,15 +1262,57 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-/* glyph buttons: prev/next, and the fold-all caret ahead of them */
-.snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+/* glyph buttons: prev/next, the fold-all caret ahead of them, and the ? that opens
+   the shortcuts dialog (the top bar's right end on a project page, the hero's
+   top right on the index) */
+.snav,.sfold,.shelp,.kbtn{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
-.snav:hover,.sfold:hover{border-color:var(--machine);color:var(--ink)}
+.snav:hover,.sfold:hover,.shelp:hover{border-color:var(--machine);color:var(--ink)}
 .snav:disabled{opacity:.35;cursor:default}
-.snav:focus-visible,.sfold:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.snav:focus-visible,.sfold:focus-visible,.shelp:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .sessnav[hidden]{display:none}
+.tbtop .shelp{flex:0 0 auto}
+header.hero{position:relative}
+.hero>.shelp{position:absolute;right:0;top:22px}
+/* shortcuts dialog: ? or the ? button opens it; Esc, the close button, or a click
+   on the backdrop closes it. Keys are keycaps, gestures are plain text. */
+.help{padding:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+  color:var(--ink);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
+.help::backdrop{background:color-mix(in srgb,var(--bg) 72%,transparent)}
+.help-box{padding:18px 22px 20px}
+.help-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+.help h2{font-family:var(--serif);font-size:20px;font-weight:500;margin:0}
+.help-close{appearance:none;-webkit-appearance:none;border:0;background:none;padding:2px 6px;
+  border-radius:4px;color:var(--dim);font:inherit;font-size:18px;line-height:1;cursor:pointer}
+.help-close:hover{color:var(--ink)}
+.help-close:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.help h3{margin:14px 0 6px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--faint)}
+.help dl{display:grid;grid-template-columns:minmax(0,200px) 1fr;gap:6px 16px;margin:0;
+  font-size:12px;line-height:18px;color:var(--dim)}
+.help dt{color:var(--ink)}
+.help dd{margin:0}
+.help kbd{display:inline-block;min-width:18px;padding:0 5px;border:1px solid var(--line);
+  border-bottom-width:2px;border-radius:4px;background:var(--bg);font:inherit;font-size:11px;
+  line-height:16px;text-align:center;color:var(--ink)}
+/* samples of the top bar's controls: the name in its serif, the title with its
+   bullet, a miniature ribbon, and the share glyph (styled by .share, not a button here) */
+.help .kbtn{vertical-align:middle;cursor:default}
+.help .kname{font-family:var(--serif);font-size:14px;color:var(--ink)}
+.help .ktitle{color:var(--dim)}
+.help .ktitle::before{content:"\\2022";margin:0 6px 0 1px;color:var(--faint)}
+.help .kribbon{position:relative;display:inline-block;width:72px;height:12px;vertical-align:middle}
+.help .kribbon::before{content:"";position:absolute;left:0;right:0;top:6px;height:1px;background:var(--line)}
+.help .kribbon i{position:absolute;top:2px;width:8px;height:8px;border-radius:50%;border:1px solid var(--bg);
+  box-sizing:border-box;background:var(--s1)}
+.help .kribbon i:nth-child(2){left:28px;background:var(--s2)}
+.help .kribbon i:nth-child(3){left:60px;background:var(--s3)}
+.help .kicon{vertical-align:middle;cursor:default}
+.help-note{margin:0 0 8px;font-size:11px;line-height:16px;color:var(--dim)}
+.help-foot{margin:16px 0 0;font-size:11px;color:var(--faint)}
+@media (max-width:640px){.help dl{grid-template-columns:1fr;gap:2px 0}.help dd{margin-bottom:6px}}
 
 /* ---- hero ---- */
 header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
@@ -1529,7 +1634,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry.current .clock::before{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc,var(--human)) 40%,transparent)}
 }
 /* on the narrowest phones (<=360px) the crumb + stepper stop fitting on one line
-   even with the title and name ellipsized, so the sticky bar stacks them. The
+   even with the title and name ellipsized, so the top bar stacks them. The
    explicit width:100% is needed because align-items:stretch alone won't shrink the
    crumb (a flex container) below its content — width:100% gives it a definite size
    so its title ellipsizes to fit. */
@@ -1739,7 +1844,7 @@ if(sessions.length>1&&sessCur){
   dots.forEach(dt=>dt.addEventListener('click',()=>goTo(
     sessions.findIndex(session=>session.id===dt.dataset.s))));
   addEventListener('keydown',e=>{
-    if(e.metaKey||e.ctrlKey||e.altKey) return;
+    if(e.metaKey||e.ctrlKey||e.altKey||document.querySelector('dialog[open]')) return;
     const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
     const k=e.key.toLowerCase();
     if(k==='j'){e.preventDefault();jump(1);} else if(k==='k'){e.preventDefault();jump(-1);}
@@ -1837,7 +1942,7 @@ if(logEl) logEl.addEventListener('click',e=>{
   shareBlock(block,b.dataset.share==='entry'?b.closest('.entry'):null);
 });
 addEventListener('keydown',e=>{                 // s: share the session at the reading line
-  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(e.metaKey||e.ctrlKey||e.altKey||document.querySelector('dialog[open]')) return;
   const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
   if(e.key.toLowerCase()!=='s') return;
   const block=sessions[curSessIdx]?.closest('details.session-block'); if(block){ e.preventDefault(); shareBlock(block,null); }
@@ -1858,6 +1963,23 @@ document.querySelectorAll('.ask.clip').forEach(el=>{
   el.addEventListener('click',()=>{el.classList.remove('clip');el.removeAttribute('title');});
 });
 buildMap();
+"""
+
+
+HELP_JS = """
+// ---- shortcuts dialog: ? or the ? button toggles it; the browser closes it on Esc,
+// and the close button or a click on the backdrop closes it too
+const help=document.getElementById('help');
+if(help&&help.showModal){
+  const toggleHelp=()=>{ if(help.open) help.close(); else help.showModal(); };
+  document.getElementById('shelp')?.addEventListener('click',toggleHelp);
+  document.getElementById('helpClose')?.addEventListener('click',()=>help.close());
+  help.addEventListener('click',e=>{ if(e.target===help) help.close(); });   // the backdrop
+  addEventListener('keydown',e=>{
+    if(e.metaKey||e.ctrlKey||e.altKey||e.key!=='?') return;
+    const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
+    e.preventDefault(); toggleHelp(); });
+}
 """
 
 
@@ -2431,7 +2553,7 @@ def render(tl, home=None, refreshed_at=None):
                   f'<span class="rdate">{esc(fmt_date_short(last))}</span></div>')
 
     topbar = (f'<div class="topbar"><div class="wrap">'
-              f'<div class="tbtop">{crumb}{stepper}</div>{ribbon}</div></div>')
+              f'<div class="tbtop">{crumb}{stepper}{help_button()}</div>{ribbon}</div></div>')
     minimap = ""
     body_class = "has-right-rail"
     if len(ms) <= MINIMAP_MAX_ENTRIES:
@@ -2660,7 +2782,9 @@ def render(tl, home=None, refreshed_at=None):
         shared_icon=favicon_data_url(shared=True),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
-        css=CSS, js=JS + REFRESH_JS + USAGE_JS,
+        css=CSS, js=JS + REFRESH_JS + USAGE_JS + HELP_JS,
+        help=help_html(project=True, stepper=total > 1, explorer=bool(usage_html),
+                       ribbon=bool(ribbon)),
         body_class=body_class,
         project=esc(tl["project_name"]),
         path=esc(tl["project_path"]),
@@ -2721,6 +2845,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
 <style>{css}</style></head><body>
 <div class="wrap">
 <header class="hero">
+  {help_button}
   <h1>Project logs</h1>
   <div class="path">{root}</div>
   <div class="range">{range}</div>
@@ -2732,6 +2857,7 @@ INDEX_PAGE = """<!doctype html><html lang="en"><head>
 <div class="shelf">{rows}</div>
 <footer>{n} projects &middot; {provenance} &middot; refreshed {refreshed}</footer>
 </div>
+{help}
 <script>{js}</script>
 </body></html>"""
 
@@ -2829,7 +2955,9 @@ def render_index(entries, refreshed_at=None, source_label=None):
         rows="".join(rows),
         n=len(entries),
         refreshed=refresh_stamp(refreshed),
-        js=REFRESH_JS + USAGE_JS,
+        js=REFRESH_JS + USAGE_JS + HELP_JS,
+        help_button=help_button(),
+        help=help_html(project=False, explorer=bool(usage_html)),
         costnote=cost_method_html(all_by_model, "all projects"),
     )
 
@@ -2855,6 +2983,7 @@ PAGE = """<!doctype html><html lang="en"><head>
 <div class="log">{timeline}</div>
 <footer><span title="{input_count_title}">{n_inputs} input{input_suffix}</span> &middot; {provenance} &middot; last activity {last_activity} &middot; refreshed {refreshed}</footer>
 </div>
+{help}
 <script>{js}</script>
 </body></html>"""
 
