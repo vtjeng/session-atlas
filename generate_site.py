@@ -1260,6 +1260,17 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 .session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
+/* share: a label that downloads a standalone page of its session or entry. The
+   session's sits at the right end of the header's label row; an entry's sits under
+   its clock in the gutter, shown on hover or focus (always where hover is absent). */
+.share{appearance:none;-webkit-appearance:none;border:0;background:none;padding:0;
+  cursor:pointer;font:inherit;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);transition:color .12s}
+.share:hover,.share:focus-visible{color:var(--machine);outline:none;text-decoration:underline}
+summary.sess .share{position:absolute;right:0;top:20px;line-height:15px}
+.entry .share{position:absolute;left:0;top:20px;width:52px;text-align:right;opacity:0}
+.entry:hover .share,.entry:focus-within .share{opacity:1}
+@media (hover:none){.entry .share{opacity:1}}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1482,6 +1493,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry,.sess,.gapnote{padding-left:0}
   summary.sess::before{position:static;display:inline-block;margin-right:8px}
   summary.sess::after{display:none}
+  .entry .share{left:auto;right:0;top:0;width:auto}   /* top right, on the clock's line */
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
@@ -1729,6 +1741,69 @@ addEventListener('toggle',e=>{ if(!(e.target instanceof Element)||!e.target.matc
   if(foldRaf) return;
   foldRaf=requestAnimationFrame(()=>{ foldRaf=0; writeFolds(); paintFold(); updateMap(); resync(); }); },true);
 paintFold();
+
+// ---- share: download a standalone page holding one session or one entry, for a
+// trusted colleague. The clone keeps every field of the unit, including paths, cost,
+// and times, and drops only what works nowhere but inside this page: the session id
+// in the label and in a fork tag's tooltip, anchor ids and fragment links, the
+// timeline mark, the scroll data attributes, these controls, and the prompt
+// clipping, which the page script expands and the extract cannot. ----
+const PROJECT=document.querySelector('.hero h1')?.textContent||document.title;
+const PROJECT_PATH=document.querySelector('.hero .path')?.textContent||'';
+const PAGE_CSS=[...document.querySelectorAll('head style')].map(s=>s.textContent).join('\\n');
+const p2=n=>String(n).padStart(2,'0');
+const fmtDay=iso=>{const d=new Date(iso);return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});};
+const stampOf=iso=>{const d=new Date(iso);return isNaN(d)?'entry':d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'-'+p2(d.getHours())+p2(d.getMinutes());};
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)||'project';
+const escH=s=>s.replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+function extractHtml(block,entry){
+  const kids=[...block.children], c=block.cloneNode(true);
+  if(entry){                                   // keep the entry and the day rule before it
+    let day=null; for(let n=entry.previousElementSibling;n;n=n.previousElementSibling){ if(n.classList.contains('day')){day=n;break;} }
+    const keep=new Set([entry,day].filter(Boolean).map(el=>kids.indexOf(el)));
+    [...c.children].forEach((ch,i)=>{ if(ch.tagName!=='SUMMARY'&&!keep.has(i)) ch.remove(); }); }
+  c.setAttribute('open','');
+  const hdr=c.querySelector('summary.sess'), lbl=hdr?.querySelector('a.lbl');
+  if(lbl){ const s=document.createElement('span'); s.className='lbl';
+    s.append(lbl.querySelector('.sw').cloneNode(true),lbl.querySelector('.sn').cloneNode(true)); lbl.replaceWith(s); }
+  c.querySelectorAll('.forktag').forEach(t=>{ const s=document.createElement('span'); s.className='forktag';
+    s.textContent=t.textContent.replace(/\\s[0-9a-f]{8}$/,' session'); t.replaceWith(s); });
+  c.querySelectorAll('.share,.emark').forEach(el=>el.remove());
+  c.querySelectorAll('a[href^="#"]').forEach(a=>{ const s=document.createElement('span'); s.className=a.className; s.textContent=a.textContent; a.replaceWith(s); });
+  c.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+  c.querySelectorAll('*').forEach(el=>{ for(const a of [...el.attributes]) if(a.name.startsWith('data-')) el.removeAttribute(a.name); });
+  c.querySelectorAll('.ask.clip').forEach(el=>{ el.classList.remove('clip'); el.removeAttribute('title'); });
+  const es=entry?[entry]:[...block.querySelectorAll('.entry[data-ts]')];
+  const first=es[0]?.dataset.ts, last=es[es.length-1]?.dataset.ts;
+  const when=first?fmtDay(first)+(last&&fmtDay(last)!==fmtDay(first)?' \u2192 '+fmtDay(last):''):'';
+  const sn=hdr?.querySelector('.sn')?.textContent||'session', unit=entry?'entry':'session';
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="session-atlas">'
+    +'<title>'+escH(PROJECT)+' \u00b7 '+escH(sn)+'</title><style>'+PAGE_CSS+'</style></head><body class="shared"><div class="wrap">'
+    +'<header class="hero"><h1>'+escH(PROJECT)+'</h1><div class="path">'+escH(PROJECT_PATH)+'</div>'
+    +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 one entry':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
+    +'<div class="log">'+c.outerHTML+'</div>'
+    +'<footer>shared from session-atlas \u00b7 '+unit+' exported '+escH(fmtDay(new Date().toISOString()))+'</footer></div></body></html>';
+}
+function shareBlock(block,entry){
+  const n=(block.querySelector('summary.sess .sn')?.textContent||'').replace(/\\D/g,'')||'1';
+  const name=slug(PROJECT)+'--session-'+n+(entry?'--'+stampOf(entry.dataset.ts||''):'')+'.html';
+  const url=URL.createObjectURL(new Blob([extractHtml(block,entry)],{type:'text/html'}));
+  const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+if(logEl) logEl.addEventListener('click',e=>{
+  const b=e.target.closest('.share'); if(!b) return;
+  e.preventDefault();                          // the button, not the summary, is the click's target
+  const block=b.closest('details.session-block'); if(!block) return;
+  shareBlock(block,b.dataset.share==='entry'?b.closest('.entry'):null);
+});
+addEventListener('keydown',e=>{                 // s: share the session at the reading line
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
+  if(e.key.toLowerCase()!=='s') return;
+  const block=sessions[curSessIdx]?.closest('details.session-block'); if(block){ e.preventDefault(); shareBlock(block,null); }
+});
 
 // ---- shared scroll + layout listeners ----
 let raf=0;
@@ -2367,6 +2442,8 @@ def render(tl, home=None, refreshed_at=None):
                 f'&middot; {esc(cur_session[:8])}</a> '
                 f'{tool_pill(sess_tool.get(cur_session))}'
                 f'{origin_tag(session)}'
+                f'<button type="button" class="share" data-share="session"'
+                f' title="download this session as a standalone page">share</button>'
                 f'<span class="stitle">{esc(stitle)}</span>'
                 f'<span class="sstats">{esc(" · ".join(bits))}</span></summary>')
             prev_ts = None
@@ -2515,11 +2592,13 @@ def render(tl, home=None, refreshed_at=None):
         nodes.append(
             f'<div class="entry {kind}{quiet}" id="{entry_ids[i]}" '
             f'data-session-index="{sess_idx.get(m["session"], 1)}" data-w="{w:.3f}"'
-            f' data-rf="{rf(m["ts"])}"'
+            f' data-rf="{rf(m["ts"])}" data-ts="{esc(m["ts"])}"'
             f' style="{_sc_var(sess_idx.get(m["session"], 1))}">'
             f'<a class="emark" href="#{entry_ids[i]}" aria-label="scroll to this entry"></a>'
             f'<a class="clock" href="#{entry_ids[i]}" title="link to this entry">'
             f'{esc(fmt_clock(m["ts"]))}</a>'
+            f'<button type="button" class="share" data-share="entry"'
+            f' title="download this entry as a standalone page">share</button>'
             f'{ask}{ro}</div>')
 
     if session_open:

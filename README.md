@@ -69,7 +69,10 @@ styles and scripts, so it works without a web server or network connection.
 
 By default, the scripts read live transcripts and Codex history and diagnostics
 from your home directory, access those files and any selected archive through
-filesystem paths, write all output locally, and do not upload source data.
+filesystem paths, write all output locally, and do not upload source data. A
+page downloaded with a project page's `share` control holds the same content as
+the session or entry it came from, including tool arguments and paths; see
+[Sharing a session or an entry](#sharing-a-session-or-an-entry).
 
 Git ignores `site/` and `archive/`. A normal clone therefore contains the
 source code, tests, documentation, and optional systemd units, but it does not
@@ -342,6 +345,23 @@ On wide screens, click or drag the right-hand minimap to scroll through the
 page. Very large pages (more than 1,000 timeline entries) omit the minimap so
 its navigation nodes do not add to the page's loading work, but retain the
 right-hand gutter so switching between project pages does not shift the layout.
+
+#### Sharing a session or an entry
+
+Click `share` at the right of a session header, or under an entry's clock, to
+download a standalone page that holds that session or that entry with the
+atlas's styling. Press `s` to share the session at the reading line. The file
+is named after the project and the session, with the entry's local date and
+time appended for an entry. It carries no script: the expandable logs and the
+session fold work through the browser.
+
+The shared page is meant for a trusted colleague. It keeps every field of the
+unit: the prompt in full, response excerpts, the tool log with its arguments,
+changed files, model chips, token and cost figures, timestamps, and the
+project's name and path. It drops only what works nowhere but inside the
+project page: the session id in the header and in a fork tag's tooltip, the
+anchor ids and links, the timeline marks, and the share controls. Review the
+file before sending it if the tool log may contain a secret.
 
 #### Charts and timestamps
 

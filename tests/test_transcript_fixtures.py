@@ -75,6 +75,13 @@ class TranscriptFixtureTests(unittest.TestCase):
         # session, and the merged example project has two.
         self.assertEqual(len(blocks), 1)
         self.assertNotIn('id="sfold"', claude_only)
+        # Each unit carries a share control, and each entry carries the ISO
+        # timestamp that the extract's file name and date line are built from.
+        self.assertEqual(claude_only.count('data-share="session"'), 1)
+        self.assertEqual(
+            claude_only.count('data-share="entry"'), len(_entry_ids(claude_only)))
+        self.assertEqual(
+            claude_only.count(' data-ts="'), len(_entry_ids(claude_only)))
         codex = [
             tl for tl in build_codex_timelines(
                 rollout_paths(os.path.join(FIXTURES, "codex")))
