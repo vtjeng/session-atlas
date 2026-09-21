@@ -1164,7 +1164,8 @@ def _usage_html(series):
     for k in USAGE_INTERVALS:
         cls = "interval" + (" on" if k == "auto" else "") + (" eff" if k == interval else "")
         disabled = " disabled" if k == "hour" and n > USAGE_MAX_HOURLY_DAYS else ""
-        title = ("hourly up to a month, daily up to 26 weeks, then weekly" if k == "auto"
+        title = ("hourly while each hour has room, up to a month; daily up to 26 weeks; "
+                 "then weekly" if k == "auto"
                  else f"windows of {USAGE_MAX_HOURLY_DAYS} days or fewer" if k == "hour"
                  else f"one bar per {k}")
         intervals.append(f'<button type="button" class="{cls}" data-i="{k}"{disabled} '
@@ -1335,7 +1336,7 @@ button{font:inherit;color:inherit}
    0, grow 1) and is the first thing to ellipsize as the bar narrows; the name only
    starts truncating once the description is gone */
 .crumb-desc{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;color:var(--dim);font-size:12.5px}
+  text-overflow:ellipsis;color:var(--dim);font-size:13px}
 .crumb-desc::before{content:"\\2022";margin:0 8px 0 1px;color:var(--faint)}
 .crumb-desc:empty{display:none}
 .backlink{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -1346,7 +1347,7 @@ button{font:inherit;color:inherit}
 .backlink:hover .ar,.backlink:focus-visible .ar{transform:translateX(-3px)}
 /* session time-ribbon: dots on a real-date axis, full-width under the crumb row */
 .ribbon{display:flex;align-items:center;gap:10px;width:100%}
-.rdate{flex:0 0 auto;font-size:9px;color:var(--faint);white-space:nowrap}
+.rdate{flex:0 0 auto;font-size:10px;color:var(--faint);white-space:nowrap}
 .rtrack{position:relative;flex:1 1 auto;height:16px;cursor:pointer}
 .rtrack::before{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}
 /* faint per-entry dots: where a session's activity actually fell (spread + density) */
@@ -1410,9 +1411,9 @@ header.hero{position:relative}
   border-radius:4px;color:var(--dim);font:inherit;font-size:18px;line-height:1;cursor:pointer}
 .help-close:hover{color:var(--ink)}
 .help-close:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-.help h3{margin:14px 0 6px;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+.help h3{margin:14px 0 6px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--faint)}
-.help dl{display:grid;grid-template-columns:minmax(0,200px) 1fr;gap:6px 16px;margin:0;
+.help dl{display:grid;grid-template-columns:minmax(0,150px) 1fr;gap:6px 16px;margin:0;
   font-size:12px;line-height:18px;color:var(--dim)}
 .help dt{color:var(--ink)}
 .help dd{margin:0}
@@ -1440,7 +1441,7 @@ header.hero{position:relative}
 header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
 h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em;
   margin:12px 0 6px}
-.path{font-size:11.5px;color:var(--faint);word-break:break-all}
+.path{font-size:12px;color:var(--faint);word-break:break-all}
 .range{font-size:12px;color:var(--dim);margin-top:12px}
 .range b{color:var(--ink);font-weight:600}
 .age{color:var(--faint);white-space:nowrap}
@@ -1467,15 +1468,15 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .meta .mdl,.meta .tn{color:var(--machine)}
 .meta .mdl.fam-claude{color:var(--claude)}
 .meta .mdl.fam-gpt{color:var(--codex)}
-.tooltag{display:inline-block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+.tooltag{display:inline-block;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
   padding:1px 6px;border:1px solid var(--line);border-radius:4px;color:var(--dim)}
 .tooltag.t-claude{color:var(--claude);border-color:var(--claude)}
 .tooltag.t-codex{color:var(--codex);border-color:var(--codex)}
-.origintag{display:inline-block;margin-left:4px;font-size:9px;letter-spacing:.1em;
+.origintag{display:inline-block;margin-left:4px;font-size:10px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--machine)}
 .origintag.t-recovered{color:var(--human);border:1px solid color-mix(in srgb,var(--human) 35%,transparent);
   border-radius:3px;padding:1px 4px;letter-spacing:.08em}
-.forktag{margin-left:7px;font-size:9px;color:var(--faint);text-decoration:none}
+.forktag{margin-left:7px;font-size:10px;color:var(--faint);text-decoration:none}
 a.forktag:hover,a.forktag:focus-visible{color:var(--machine);text-decoration:underline;
   outline:none}
 /* ---- log ---- */
@@ -1527,7 +1528,7 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
 .entry .share{position:absolute;left:34px;top:19px;opacity:0}
 .entry:hover .share,.entry.current .share,.entry .share:focus-visible{opacity:1}
 @media (hover:none){.entry .share{opacity:1}}
-.gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
+.gapnote{padding-left:92px;margin:-8px 0 16px;font-size:11px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
 .entry.quiet{padding-bottom:20px}
@@ -1547,7 +1548,7 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:62ch;
   white-space:pre-wrap;overflow-wrap:anywhere}
-.terminal{font-family:var(--mono);font-size:12.5px;line-height:1.45;max-width:100%;
+.terminal{font-family:var(--mono);font-size:13px;line-height:1.45;max-width:100%;
   white-space:nowrap;overflow-x:auto;color:var(--dim)}
 .terminal .cmdname{color:var(--human)}
 .terminal .term-sep{padding:0 8px;color:var(--faint)}
@@ -1560,13 +1561,13 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
   padding-right:4px}
 .ask-open{font-size:12px;color:var(--faint)}
 .entry.subagent .ask{font-family:var(--mono);font-size:12px;color:var(--machine)}
-.recovered-note{margin-top:7px;font-size:10.5px;color:var(--faint)}
+.recovered-note{margin-top:7px;font-size:11px;color:var(--faint)}
 .entry.recovered .emark::after{background:var(--bg);border:2px solid var(--human);
   border-radius:50%}
 
 /* machine readout */
 .ro{margin-top:12px;max-width:660px;background:var(--panel);border:1px solid var(--line);
-  border-radius:8px;padding:10px 14px 11px;font-size:11.5px;color:var(--dim)}
+  border-radius:8px;padding:10px 14px 11px;font-size:12px;color:var(--dim)}
 .rostat{display:flex;flex-wrap:wrap;gap:4px 16px}
 .rostat b{color:var(--ink);font-weight:600}
 .rostat .mdl{color:var(--machine)}
@@ -1578,7 +1579,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .rotools .tn{color:var(--machine)}
 .rotools .tool-count{color:var(--ink)}
 details.more{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px}
-details.more>summary{cursor:pointer;font-size:10.5px;letter-spacing:.1em;
+details.more>summary{cursor:pointer;font-size:11px;letter-spacing:.1em;
   text-transform:uppercase;color:var(--faint);list-style:none;user-select:none}
 details.more>summary::-webkit-details-marker{display:none}
 details.more>summary::before{content:"\\25B8  "}
@@ -1586,17 +1587,17 @@ details.more[open]>summary::before{content:"\\25BE  "}
 details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .responses{margin-top:15px}
 .detail-section+.detail-section{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
-.response-heading,.detail-heading{margin-bottom:10px;font-size:9.5px;letter-spacing:.14em;
+.response-heading,.detail-heading{margin-bottom:10px;font-size:10px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint)}
 .response-item+.response-item{margin-top:9px}
-.response-meta{margin-bottom:3px;font-size:10.5px;
+.response-meta{margin-bottom:3px;font-size:11px;
   letter-spacing:.02em;color:var(--faint)}
-.response-text{font-family:var(--serif);font-size:12.5px;line-height:1.45;color:var(--dim)}
+.response-text{font-family:var(--serif);font-size:13px;line-height:1.45;color:var(--dim)}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
 .files{margin-top:10px}
 .files .detail-heading{margin-bottom:5px}
-.files code{display:block;font-size:11.5px;color:var(--ink);padding:1px 0}
+.files code{display:block;font-size:12px;color:var(--ink);padding:1px 0}
 .telog{margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:2px 14px;
   font-size:11px}
 .telog .tn{color:var(--machine);white-space:nowrap}
@@ -1617,7 +1618,7 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing>summary:hover{border-color:var(--machine);color:var(--ink);background:var(--panel2)}
 .pricing>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .pricing-body{max-width:660px;margin:14px 0 0;text-align:left;
-  color:var(--dim);font-size:11.5px;line-height:1.55}
+  color:var(--dim);font-size:12px;line-height:1.55}
 .pricing-body p{margin:0 0 9px}
 .pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
 .pricing-body li{padding-left:2px}
@@ -1682,14 +1683,14 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   border-bottom:1px solid var(--line);font-size:11px;line-height:16px;color:var(--dim)}
 .uro-head{display:flex;justify-content:space-between;align-items:center;gap:8px;height:22px}
 .uro-head time{font-size:12px;font-weight:600;color:var(--ink)}
-.ubtn{font:inherit;font-size:10.5px;height:20px;padding:0 8px;color:var(--dim);
+.ubtn{font:inherit;font-size:11px;height:20px;padding:0 8px;color:var(--dim);
   background:var(--panel2);border:1px solid var(--line);border-radius:4px;cursor:pointer;
   transition:color .12s,border-color .12s}
 .ubtn:disabled{opacity:.4;cursor:default}
 .ubtn:not(:disabled):hover{color:var(--ink);border-color:var(--machine)}
 .ubtn:focus-visible{outline:2px solid var(--machine);outline-offset:1px}
 .uro-line{height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.uro-k{display:inline-block;width:64px;font-size:9.5px;letter-spacing:.12em;
+.uro-k{display:inline-block;width:64px;font-size:10px;letter-spacing:.12em;
   text-transform:uppercase;color:var(--faint)}
 /* an item is its name followed by its value; items flow along the line */
 .ui{display:inline-flex;gap:6px;margin-right:18px;vertical-align:top;
@@ -1737,9 +1738,13 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .brush .grip.r{right:-4px}
 .uminiaxis{display:flex;justify-content:space-between;margin:4px 0 0 var(--ugut);
   font-size:10px;line-height:16px;color:var(--faint)}
-.uhelp{margin:8px 0 0;font-size:10.5px;line-height:16px;color:var(--faint)}
+.uhelp{margin:8px 0 0;font-size:11px;line-height:16px;color:var(--faint)}
 
 @media (max-width:640px){
+  /* the readout's lines get two lines each, at a fixed height so the frame stays
+     put; one line held 50 characters of the 87 the first line needs */
+  .uro-line{height:32px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical}
   .stats{grid-template-columns:repeat(2,1fr)}
   .stat .d{white-space:normal;min-height:32px}   /* two reserved lines, so a wrap moves nothing */
   h1{font-size:30px}
@@ -2178,7 +2183,14 @@ const METRIC={
   tok:{get:d=>d.o||0,nice:nice,axis:fmtNum,col:1,fmt:fmtNum},
   act:{get:d=>d.a||0,nice:niceMs,axis:axisDur,col:2,fmt:fmtDur}};
 const MAX_HOURLY_DAYS=31, AUTO_HOUR_MAX_DAYS=MAX_HOURLY_DAYS, AUTO_DAY_MAX_DAYS=182;
-const autoInterval=n=>n<=AUTO_HOUR_MAX_DAYS?'hour':n<=AUTO_DAY_MAX_DAYS?'day':'week';
+// auto: hourly while the window is a month or less and each hour gets at least
+// MIN_HOUR_SLOT pixels of plot (96 hours in a phone's 284px plot were hairlines),
+// daily up to 26 weeks, weekly beyond. The server assumes a wide plot; the first
+// client render re-picks for the real width.
+const MIN_HOUR_SLOT=3;
+const plotWidth=()=>bars.getBoundingClientRect().width||800;
+const autoInterval=n=>(n<=AUTO_HOUR_MAX_DAYS&&plotWidth()/(n*24)>=MIN_HOUR_SLOT)?'hour'
+  :n<=AUTO_DAY_MAX_DAYS?'day':'week';
 const $=id=>document.getElementById(id);
 const plot=$('uPlot'), mini=$('uMini'), brush=$('uBrush'), hov=$('uHov'), sel=$('uSel'), vg=$('uVg'), axis=$('uAxis');
 const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
@@ -2323,7 +2335,8 @@ function render(){
 function renderMini(){ const M=METRIC[metric];
   const values=binned(bucketsFor(eff,0,N-1).map(x=>x.d?M.get(x.d):0),Math.max(1,Math.floor(mbars.getBoundingClientRect().width/2)));
   paintBars(mbars,values,Math.max(...values)); }
-let miniTimer=0; addEventListener('resize',()=>{clearTimeout(miniTimer); miniTimer=setTimeout(renderMini,120);});
+let miniTimer=0; addEventListener('resize',()=>{clearTimeout(miniTimer); miniTimer=setTimeout(()=>{
+  renderMini(); if(interval==='auto'&&effective()!==eff) render(); },120);});   // width can change auto's pick
 function setWin(a,b){ a=clamp(a); b=clamp(b); if(a>b)[a,b]=[b,a]; if(a===A&&b===B) return; A=a; B=b; render(); }
 // ---- the view lives in the query string as separate fields, defaults omitted:
 // ?range=30d or ?from=2026-03-01&to=2026-03-15, &metric=tok|act, &interval=hour|day|week.
@@ -2412,8 +2425,12 @@ plot.addEventListener('keydown',e=>{
   else if(e.key==='Escape') j=-1; else return;
   e.preventDefault(); setPin(j>=0?cur[j].k:-1);
 });
+// the server drew the all-time view for a wide plot; if this plot's width makes
+// auto pick another interval, draw it now
+const drawn=intervals.find(b=>b.classList.contains('eff'))?.dataset.i;
 eff=effective(); cur=bucketsFor(eff,A,B); paintIntervals(); renderMini();
 readUrl();
+if(interval==='auto'&&eff!==drawn) render();
 })();
 """
 
