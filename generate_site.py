@@ -1227,16 +1227,20 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
 .stat .d{margin-top:3px;font-size:11px;line-height:16px;color:var(--dim);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 .stat .d b{color:var(--ink);font-weight:600}
-.meta-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:26px}
-.chip{font-size:11px;padding:3px 9px;border:1px solid var(--line);border-radius:4px;
-  background:var(--panel);color:var(--dim);white-space:nowrap}
-.chip b{color:var(--ink);font-weight:600}
-.chip.model{color:var(--machine)}
-.chip.model.fam-claude{color:var(--claude)}
-.chip.model.fam-gpt{color:var(--codex)}
-.chip.model .model-turns{color:var(--ink)}
-.chip .tool-name{color:var(--machine)}
-.chip .tool-count{color:var(--ink)}
+/* model turns, tool counts, and parser notes under the tiles, in the usage readout's
+   form (a label column and fixed-width cells, name left and count right) rather
+   than badges, which suggested something to click. Cells wrap in rows of the same
+   width, so the columns stay aligned. */
+.meta{margin-top:26px;font-size:11px;line-height:16px;color:var(--dim)}
+.meta-line{display:flex;align-items:flex-start}
+.meta-line+.meta-line{margin-top:4px}
+.meta .uro-k{flex:0 0 64px}
+.meta-cells{display:flex;flex-wrap:wrap;gap:0 12px;min-width:0}
+.meta .ui{margin-right:0}
+.meta b{color:var(--ink);font-weight:600}
+.meta .mdl,.meta .tn{color:var(--machine)}
+.meta .mdl.fam-claude{color:var(--claude)}
+.meta .mdl.fam-gpt{color:var(--codex)}
 .tooltag{display:inline-block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
   padding:1px 6px;border:1px solid var(--line);border-radius:4px;color:var(--dim)}
 .tooltag.t-claude{color:var(--claude);border-color:var(--claude)}
@@ -2304,25 +2308,35 @@ def render(tl, home=None, refreshed_at=None):
     stats_html = _stat_cards_html(stat_cards)
     usage_html = _usage_html(series) if series else ""
 
-    chips = []
-    for m in real_models:
-        fam = model_family(m)
-        cls = f"chip model fam-{fam}" if fam else "chip model"
-        model_turns = s["models"][m]
-        chips.append(
-            f'<span class="{cls}" '
-            f'title="Assistant turns attributed to this model; not sessions">'
-            f'{esc(clean_model(m))} <span class="model-turns">'
-            f'<b>&times;{model_turns}</b> turn{_s(model_turns)}</span></span>')
-    for k, v in list(s["tools"].items())[:6]:
-        chips.append(f'<span class="chip"><span class="tool-name">{esc(k)}</span> '
-                     f'<b class="tool-count">&times;{v}</b></span>')
+    # models, tools, and parser notes as readout lines: a label, then one
+    # fixed-width cell per item with the name left and the count right
+    def meta_line(label, cells, title=None):
+        attr = f' title="{esc(title)}"' if title else ""
+        return (f'<div class="meta-line"{attr}><span class="uro-k">{label}</span>'
+                f'<span class="meta-cells">{"".join(cells)}</span></div>')
+
+    meta_lines = []
+    if real_models:
+        cells = []
+        for m in real_models:
+            model_turns = s["models"][m]
+            cells.append(f'<span class="ui">{_model_span(m)}<span>'
+                         f'<b>&times;{model_turns}</b> turn{_s(model_turns)}</span></span>')
+        meta_lines.append(meta_line(
+            "models", cells,
+            "Assistant turns attributed to this model; not sessions"))
+    if s["tools"]:
+        cells = [f'<span class="ui"><span class="tn">{esc(k)}</span>'
+                 f'<span><b>&times;{v}</b></span></span>'
+                 for k, v in list(s["tools"].items())[:6]]
+        meta_lines.append(meta_line("tools", cells))
     diagnostic_count = len(tl.get("diagnostics") or [])
     if diagnostic_count:
-        chips.append(
-            f'<span class="chip" title="The parser skipped malformed or non-UTF-8 '
-            f'transcript records"><b>{diagnostic_count}</b> skipped transcript '
-            f'record{_s(diagnostic_count)}</span>')
+        meta_lines.append(meta_line(
+            "parser",
+            [f'<span><b>{diagnostic_count}</b> skipped transcript '
+             f'record{_s(diagnostic_count)}</span>'],
+            "The parser skipped malformed or non-UTF-8 transcript records"))
 
     rendered_sessions = [session for session in tl["sessions"]
                          if session["id"] in sess_agg]
@@ -2656,7 +2670,7 @@ def render(tl, home=None, refreshed_at=None):
         range=range_html,
         usage=usage_html,
         stats=stats_html,
-        chips="".join(chips),
+        meta="".join(meta_lines),
         minimap=minimap, topbar=topbar,
         timeline="".join(nodes),
         last_activity=esc(fmt_ts(last)),
@@ -2838,7 +2852,7 @@ PAGE = """<!doctype html><html lang="en"><head>
   <div class="range">{range}</div>
   {usage}
   <div class="stats">{stats}</div>
-  <div class="meta-row">{chips}</div>
+  <div class="meta">{meta}</div>
   {costnote}
 </header>
 <div class="log">{timeline}</div>

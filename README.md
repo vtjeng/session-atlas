@@ -14,9 +14,9 @@ Each project page shows prompts and the assistant activity that followed them,
 including tool use, changed files, token usage, [recorded or estimated active
 time](#usage-and-api-cost-accounting), and estimated API cost.
 
-The model chips on a project page show assistant-turn counts attributed to each
-model; those numbers are not session counts. Branch names remain parser metadata
-but are not displayed as page badges.
+The models line under a project page's tiles shows assistant-turn counts
+attributed to each model; those numbers are not session counts. Branch names
+remain parser metadata but are not displayed as page badges.
 
 <p align="center"><img src="docs/images/timeline-entry.png" alt="Session content with a prompt, token usage, files, and tool calls" width="720"></p>
 
@@ -368,7 +368,7 @@ session's.
 
 The shared page is meant for a trusted colleague. It keeps every field of the
 unit: the prompt in full, response excerpts, the tool log with its arguments,
-changed files, model chips, token and cost figures, timestamps, and the
+changed files, model names, token and cost figures, timestamps, and the
 project's name and path. It drops only what works nowhere but inside the
 project page: the session id in the header and in a fork tag's tooltip, the
 anchor ids and links, the timeline marks, and the share controls. Review the
