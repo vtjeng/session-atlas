@@ -1182,14 +1182,15 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-/* prev/next, and the fold-all button ahead of them (a caret like the session headers') */
-.snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+/* glyph buttons: prev/next, the fold-all caret ahead of them, and the share arrows
+   on session headers and entries */
+.snav,.sfold,.share{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
-.snav:hover,.sfold:hover{border-color:var(--machine);color:var(--ink)}
+.snav:hover,.sfold:hover,.share:hover{border-color:var(--machine);color:var(--ink)}
 .snav:disabled{opacity:.35;cursor:default}
-.snav:focus-visible,.sfold:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.snav:focus-visible,.sfold:focus-visible,.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .sessnav[hidden]{display:none}
 
 /* ---- hero ---- */
@@ -1260,18 +1261,16 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 .session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
-/* share: a pill that downloads a standalone page of its session or entry. It has
-   the badge geometry and the stepper buttons' border, so it reads as a control next
-   to the faint labels. The session's sits at the right end of the header's label
-   row; an entry's sits under its clock, filling the clock's column. */
-.share{appearance:none;-webkit-appearance:none;box-sizing:border-box;padding:1px 6px;
-  border:1px solid var(--line);border-radius:4px;background:var(--panel);cursor:pointer;
-  font:inherit;font-size:9px;line-height:14px;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--dim);transition:border-color .12s,color .12s}
-.share:hover,.share:focus-visible{border-color:var(--machine);color:var(--ink)}
-.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-summary.sess .share{position:absolute;right:0;top:19px}
-.entry .share{position:absolute;left:0;top:22px;width:52px;text-align:center}
+/* share: a square (styled with the stepper buttons above) that downloads a standalone
+   page of its session or entry. It shows the share symbol, three dots joined by two
+   lines, drawn as a mask so it takes the button's text colour. The session's sits at
+   the right end of the header's label row; an entry's sits under its clock, on the
+   clock's right edge. */
+.share::before{content:"";width:11px;height:11px;background:currentColor;
+  -webkit-mask:var(--share-icon) center/contain no-repeat;mask:var(--share-icon) center/contain no-repeat}
+.share{--share-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='12.5' cy='3' r='2.2'/%3E%3Ccircle cx='12.5' cy='13' r='2.2'/%3E%3Ccircle cx='3.5' cy='8' r='2.2'/%3E%3Cpath d='M5.3 7.1 10.7 4.1M5.3 8.9 10.7 11.9' stroke='%23000' stroke-width='1.6' fill='none'/%3E%3C/svg%3E")}
+summary.sess .share{position:absolute;right:0;top:18px}
+.entry .share{position:absolute;left:33px;top:22px}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1494,7 +1493,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry,.sess,.gapnote{padding-left:0}
   summary.sess::before{position:static;display:inline-block;margin-right:8px}
   summary.sess::after{display:none}
-  .entry .share{left:auto;right:0;top:-1px;width:auto}   /* top right, on the clock's line */
+  .entry .share{left:auto;right:0;top:-2px}   /* top right, on the clock's line */
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
@@ -1759,12 +1758,20 @@ const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').
 const escH=s=>s.replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
 function extractHtml(block,entry){
   const kids=[...block.children], c=block.cloneNode(true);
+  const all=[...block.querySelectorAll('.entry')], at=entry?all.indexOf(entry):-1;
   if(entry){                                   // keep the entry and the day rule before it
     let day=null; for(let n=entry.previousElementSibling;n;n=n.previousElementSibling){ if(n.classList.contains('day')){day=n;break;} }
     const keep=new Set([entry,day].filter(Boolean).map(el=>kids.indexOf(el)));
     [...c.children].forEach((ch,i)=>{ if(ch.tagName!=='SUMMARY'&&!keep.has(i)) ch.remove(); }); }
   c.setAttribute('open','');
   const hdr=c.querySelector('summary.sess'), lbl=hdr?.querySelector('a.lbl');
+  if(entry){                                   // say what the extract leaves out of the session
+    const note=(n,w)=>{ const d=document.createElement('div'); d.className='gapnote';
+      d.textContent='\u00b7 \u00b7 \u00b7 '+n+' '+w+' entr'+(n===1?'y':'ies')+' not shown'; return d; };
+    const ce=c.querySelector('.entry'), before=at, after=all.length-at-1;
+    if(before>0) ce.before(note(before,'earlier'));
+    if(after>0) ce.after(note(after,'later'));
+    const st=hdr?.querySelector('.sstats'); if(st) st.textContent='whole session: '+st.textContent; }
   if(lbl){ const s=document.createElement('span'); s.className='lbl';
     s.append(lbl.querySelector('.sw').cloneNode(true),lbl.querySelector('.sn').cloneNode(true)); lbl.replaceWith(s); }
   c.querySelectorAll('.forktag').forEach(t=>{ const s=document.createElement('span'); s.className='forktag';
@@ -1782,7 +1789,7 @@ function extractHtml(block,entry){
     +'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="session-atlas">'
     +'<title>'+escH(PROJECT)+' \u00b7 '+escH(sn)+'</title><style>'+PAGE_CSS+'</style></head><body class="shared"><div class="wrap">'
     +'<header class="hero"><h1>'+escH(PROJECT)+'</h1><div class="path">'+escH(PROJECT_PATH)+'</div>'
-    +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 one entry':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
+    +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 entry <b>'+(at+1)+' of '+all.length+'</b>':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
     +'<div class="log">'+c.outerHTML+'</div>'
     +'<footer>shared from session-atlas \u00b7 '+unit+' exported '+escH(fmtDay(new Date().toISOString()))+'</footer></div></body></html>';
 }
@@ -2444,7 +2451,8 @@ def render(tl, home=None, refreshed_at=None):
                 f'{tool_pill(sess_tool.get(cur_session))}'
                 f'{origin_tag(session)}'
                 f'<button type="button" class="share" data-share="session"'
-                f' title="download this session as a standalone page">share</button>'
+                f' title="download this session as a standalone page"'
+                f' aria-label="share this session"></button>'
                 f'<span class="stitle">{esc(stitle)}</span>'
                 f'<span class="sstats">{esc(" · ".join(bits))}</span></summary>')
             prev_ts = None
@@ -2599,7 +2607,8 @@ def render(tl, home=None, refreshed_at=None):
             f'<a class="clock" href="#{entry_ids[i]}" title="link to this entry">'
             f'{esc(fmt_clock(m["ts"]))}</a>'
             f'<button type="button" class="share" data-share="entry"'
-            f' title="download this entry as a standalone page">share</button>'
+            f' title="download this entry as a standalone page"'
+            f' aria-label="share this entry"></button>'
             f'{ask}{ro}</div>')
 
     if session_open:

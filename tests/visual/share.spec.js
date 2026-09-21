@@ -91,7 +91,13 @@ test('an entry share downloads that entry with its day rule and session header',
   expect(body.match(/class="entry /g)).toHaveLength(1);
   expect(body.match(/class="day"/g)).toHaveLength(1);
   expect(body).toContain('cache invalidation');
-  expect(body).toContain('<b>session 01</b> · one entry');
+  // The extract says it is a subset: the header's date line counts the entry,
+  // a note above it counts the one earlier entry, no note follows the last
+  // entry, and the header's totals are labelled as the whole session's.
+  expect(body).toContain('<b>session 01</b> · entry <b>2 of 2</b>');
+  expect(body).toContain('<div class="gapnote">· · · 1 earlier entry not shown</div>');
+  expect(body).not.toContain('later entr');
+  expect(body).toContain('<span class="sstats">whole session: 1 prompt');
   expect(body).not.toContain('11111111');
 });
 

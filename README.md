@@ -70,7 +70,7 @@ styles and scripts, so it works without a web server or network connection.
 By default, the scripts read live transcripts and Codex history and diagnostics
 from your home directory, access those files and any selected archive through
 filesystem paths, write all output locally, and do not upload source data. A
-page downloaded with a project page's `share` control holds the same content as
+page downloaded with a project page's share button holds the same content as
 the session or entry it came from, including tool arguments and paths; see
 [Sharing a session or an entry](#sharing-a-session-or-an-entry).
 
@@ -348,12 +348,15 @@ right-hand gutter so switching between project pages does not shift the layout.
 
 #### Sharing a session or an entry
 
-Click `share` at the right of a session header, or under an entry's clock, to
-download a standalone page that holds that session or that entry with the
-atlas's styling. Press `s` to share the session at the reading line. The file
-is named after the project and the session, with the entry's local date and
-time appended for an entry. It carries no script: the expandable logs and the
-session fold work through the browser.
+Click the share button (three linked dots) at the right of a session header,
+or under an entry's clock, to download a standalone page that holds that
+session or that entry with the atlas's styling. Press `s` to share the session at the reading line.
+The file is named after the project and the session, with the entry's local
+date and time appended for an entry. It carries no script: the expandable logs
+and the session fold work through the browser. An entry's page says which
+entry of the session it is, notes above and below the entry how many earlier
+and later entries are not shown, and labels the header's totals as the whole
+session's.
 
 The shared page is meant for a trusted colleague. It keeps every field of the
 unit: the prompt in full, response excerpts, the tool log with its arguments,
