@@ -109,8 +109,8 @@ The top of the project index summarizes activity across every project and links
 to the method and token counts behind its API cost estimate.
 
 The usage explorer above the tiles charts one metric per hour, day, or week:
-est. API cost, tokens out, or agent active time, chosen on the left of the
-toolbar. The interval control on the right starts on `auto`, which plots
+est. API cost, tokens out, or agent active time, chosen from the select on
+the left of the toolbar. The interval control on the right starts on `auto`, which plots
 hours for a window of 31 days or less, days up to 26 weeks, and weeks beyond,
 and underlines the interval in effect; `hour`, `day`, and `week` fix it, and
 hourly bars need a window of 31 days or fewer. The window select offers `7d`,
