@@ -1254,11 +1254,11 @@ def _group_codex_timelines(timelines):
 CSS = """
 :root{
   --bg:#15171b; --panel:#1b1e25; --panel2:#232730; --line:#2a2f39; --spine:#333a46;
-  --ink:#e9e6df; --dim:#9aa1ac; --faint:#6b727e;
+  --ink:#e9e6df; --dim:#9aa1ac; --faint:#868e9a;
   --human:#e3b25c; --machine:#8fc1e0; --bar:#468cc6;
   /* session-identity hue cycle */
-  --s1:#468cc6; --s2:#9d7cc9; --s3:#c26787; --s4:#4fb0a4;
-  --s5:#cf83c0; --s6:#6f86d8; --s7:#b95c74; --s8:#57c0d0;
+  --s1:#468cc6; --s2:#9d7cc9; --s3:#cd7190; --s4:#4fb0a4;
+  --s5:#cf83c0; --s6:#6f86d8; --s7:#cf7087; --s8:#57c0d0;
   --claude:#d98a5c; --codex:#57b08a;
   --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
@@ -1266,11 +1266,11 @@ CSS = """
 }
 @media (prefers-color-scheme:light){
   :root{--bg:#f5f4f0;--panel:#fbfaf7;--panel2:#edece7;--line:#dcdad2;--spine:#c9c7bf;
-    --ink:#26282d;--dim:#5b616c;--faint:#8b9098;
+    --ink:#26282d;--dim:#4e535e;--faint:#6c7078;
     --human:#8a5c0a;--machine:#0d608f;--bar:#0f6fa8;
-    --s1:#0f6fa8;--s2:#7a5aa8;--s3:#a8446b;--s4:#1f8478;
-    --s5:#9c4c8f;--s6:#3f56a8;--s7:#9a3b55;--s8:#12889b;
-    --claude:#b25f2c;--codex:#2f8a63;color-scheme:light}
+    --s1:#0f6fa8;--s2:#7a5aa8;--s3:#a8446b;--s4:#147d72;
+    --s5:#9c4c8f;--s6:#3f56a8;--s7:#9a3b55;--s8:#087b8d;
+    --claude:#ac5926;--codex:#207f58;color-scheme:light}
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -1561,7 +1561,7 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 .response-heading,.detail-heading{margin-bottom:10px;font-size:9.5px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--faint)}
 .response-item+.response-item{margin-top:9px}
-.response-meta{margin-bottom:3px;font-size:10.5px;font-style:italic;
+.response-meta{margin-bottom:3px;font-size:10.5px;
   letter-spacing:.02em;color:var(--faint)}
 .response-text{font-family:var(--serif);font-size:12.5px;line-height:1.45;color:var(--dim)}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
@@ -1727,14 +1727,11 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry.subagent .clock::before{background:var(--machine);border-radius:2px}
   .entry.current .clock::before{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc,var(--human)) 40%,transparent)}
 }
-/* on the narrowest phones (<=360px) the crumb + stepper stop fitting on one line
-   even with the title and name ellipsized, so the top bar stacks them. The
-   explicit width:100% is needed because align-items:stretch alone won't shrink the
-   crumb (a flex container) below its content — width:100% gives it a definite size
-   so its title ellipsizes to fit. */
-@media (max-width:360px){
-  .tbtop{flex-direction:column;align-items:stretch;gap:6px}
-  .crumb{width:100%}
+/* on phones the crumb takes the whole first row and the stepper and ? button share
+   the second. With everything on one row the name shrank to nothing between 380px
+   and 480px, since the crumb may shrink and its title ellipsizes first. */
+@media (max-width:480px){
+  .crumb{flex:1 1 100%}
 }
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
