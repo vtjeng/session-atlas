@@ -739,7 +739,7 @@ class CodexTokenParsingTests(unittest.TestCase):
         page = render(timeline)
 
         self.assertNotIn('<aside class="minimap"', page)
-        self.assertIn('<body class="has-right-rail">', page)
+        self.assertIn('<body class="has-right-rail" data-shared-icon="', page)
 
 
 if __name__ == "__main__":

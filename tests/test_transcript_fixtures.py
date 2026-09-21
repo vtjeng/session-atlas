@@ -10,7 +10,8 @@ import warnings
 
 from ccx_parse import _new_milestone, build_timeline
 from codex_parse import build_codex_timelines, rollout_paths
-from generate_site import _allocate_project_slugs, _merge_timelines, render
+from generate_site import (
+    _allocate_project_slugs, _merge_timelines, favicon_data_url, render)
 
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "transcripts")
@@ -75,6 +76,20 @@ class TranscriptFixtureTests(unittest.TestCase):
         # session, and the merged example project has two.
         self.assertEqual(len(blocks), 1)
         self.assertNotIn('id="sfold"', claude_only)
+        # Each unit carries a share control, and each entry carries the ISO
+        # timestamp that the extract's file name and date line are built from.
+        self.assertEqual(claude_only.count('data-share="session"'), 1)
+        self.assertEqual(
+            claude_only.count('data-share="entry"'), len(_entry_ids(claude_only)))
+        self.assertEqual(
+            claude_only.count(' data-ts="'), len(_entry_ids(claude_only)))
+        # The page hands the share script a favicon with the icon's background
+        # and stroke swapped, so a shared page's tab differs from this one's.
+        self.assertIn(
+            f' data-shared-icon="{favicon_data_url(shared=True)}">', claude_only)
+        self.assertNotEqual(favicon_data_url(shared=True), favicon_data_url())
+        self.assertIn(
+            "fill%3D%22%23e9e6df%22", favicon_data_url(shared=True))
         codex = [
             tl for tl in build_codex_timelines(
                 rollout_paths(os.path.join(FIXTURES, "codex")))

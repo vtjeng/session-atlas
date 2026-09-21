@@ -56,12 +56,29 @@ _MAX_PROJECT_SLUG = 80
 MINIMAP_MAX_ENTRIES = 1000
 
 
-@functools.lru_cache(maxsize=1)
+# The favicon's background and stroke colours; a shared page swaps them.
+_ICON_BACKGROUND = "#15171b"
+_ICON_STROKE = "#e9e6df"
+
+
+@functools.lru_cache(maxsize=2)
+def favicon_data_url(shared=False):
+    """Return the favicon as an SVG data URL.
+
+    With ``shared``, the icon's background and stroke are swapped, so the tab
+    of a page downloaded with a share button differs from a project page's.
+    """
+    svg = Path(__file__).with_name("favicon.svg").read_text(encoding="utf-8")
+    if shared:
+        svg = (svg.replace(_ICON_BACKGROUND, "\0")
+               .replace(_ICON_STROKE, _ICON_BACKGROUND)
+               .replace("\0", _ICON_STROKE))
+    return f"data:image/svg+xml,{quote(svg, safe='')}"
+
+
 def favicon_link():
     """Return the standalone-page favicon as an embedded SVG data URL."""
-    svg = Path(__file__).with_name("favicon.svg").read_text(encoding="utf-8")
-    return (f'<link rel="icon" type="image/svg+xml" '
-            f'href="data:image/svg+xml,{quote(svg, safe="")}">')
+    return f'<link rel="icon" type="image/svg+xml" href="{favicon_data_url()}">'
 
 # ------------------------------------------------------------------ helpers -- #
 def esc(s):
@@ -1182,7 +1199,7 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-/* prev/next, and the fold-all button ahead of them (a caret like the session headers') */
+/* glyph buttons: prev/next, and the fold-all caret ahead of them */
 .snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
@@ -1260,6 +1277,26 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 .session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
+/* share: a bare glyph that downloads a standalone page of its session or entry. The
+   symbol is a tray with an arrow rising from it, drawn as a mask so it takes the
+   button's colour: the clock's faint grey at rest, the accent on hover. The 24px box is
+   the hit target; only the 13px glyph shows. The session's flows after its badges on
+   the label row; an entry's sits under its clock and shows only on the entry at the
+   reading line (.current), on an entry under the pointer or with keyboard focus, and
+   on every entry where there is no hover. */
+.share{appearance:none;-webkit-appearance:none;width:24px;height:24px;display:inline-flex;
+  align-items:center;justify-content:center;padding:0;border:0;border-radius:4px;
+  background:none;color:var(--faint);cursor:pointer;transition:color .12s,opacity .12s}
+.share::before{content:"";width:13px;height:13px;background:currentColor;
+  -webkit-mask:var(--share-icon) center/contain no-repeat;mask:var(--share-icon) center/contain no-repeat}
+.share:hover{color:var(--machine)}
+.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.share{--share-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5v4a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-4'/%3E%3Cpath d='M8 10.5V2.5M5 5.5 8 2.5l3 3'/%3E%3C/svg%3E")}
+/* negative margins keep the 24px box from growing the label row */
+summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
+.entry .share{position:absolute;left:34px;top:19px;opacity:0}
+.entry:hover .share,.entry.current .share,.entry .share:focus-visible{opacity:1}
+@media (hover:none){.entry .share{opacity:1}}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1482,6 +1519,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry,.sess,.gapnote{padding-left:0}
   summary.sess::before{position:static;display:inline-block;margin-right:8px}
   summary.sess::after{display:none}
+  .entry .share{left:auto;right:-4px;top:-4px}   /* top right, on the clock's line */
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
@@ -1500,6 +1538,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 }
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
+  .share{transition:none}
 }
 """
 
@@ -1729,6 +1768,79 @@ addEventListener('toggle',e=>{ if(!(e.target instanceof Element)||!e.target.matc
   if(foldRaf) return;
   foldRaf=requestAnimationFrame(()=>{ foldRaf=0; writeFolds(); paintFold(); updateMap(); resync(); }); },true);
 paintFold();
+
+// ---- share: download a standalone page holding one session or one entry, for a
+// trusted colleague. The clone keeps every field of the unit, including paths, cost,
+// and times, and drops only what works nowhere but inside this page: the session id
+// in the label and in a fork tag's tooltip, anchor ids and fragment links, the
+// timeline mark, the scroll data attributes, these controls, and the prompt
+// clipping, which the page script expands and the extract cannot. ----
+const PROJECT=document.querySelector('.hero h1')?.textContent||document.title;
+const PROJECT_PATH=document.querySelector('.hero .path')?.textContent||'';
+const SHARED_ICON=document.body.dataset.sharedIcon||'';   // the favicon with its colours swapped
+const PAGE_CSS=[...document.querySelectorAll('head style')].map(s=>s.textContent).join('\\n');
+const p2=n=>String(n).padStart(2,'0');
+const fmtDay=iso=>{const d=new Date(iso);return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});};
+const stampOf=iso=>{const d=new Date(iso);return isNaN(d)?'entry':d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'-'+p2(d.getHours())+p2(d.getMinutes());};
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)||'project';
+const escH=s=>s.replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+function extractHtml(block,entry){
+  const kids=[...block.children], c=block.cloneNode(true);
+  const all=[...block.querySelectorAll('.entry')], at=entry?all.indexOf(entry):-1;
+  if(entry){                                   // keep the entry and the day rule before it
+    let day=null; for(let n=entry.previousElementSibling;n;n=n.previousElementSibling){ if(n.classList.contains('day')){day=n;break;} }
+    const keep=new Set([entry,day].filter(Boolean).map(el=>kids.indexOf(el)));
+    [...c.children].forEach((ch,i)=>{ if(ch.tagName!=='SUMMARY'&&!keep.has(i)) ch.remove(); }); }
+  c.setAttribute('open','');
+  const hdr=c.querySelector('summary.sess'), lbl=hdr?.querySelector('a.lbl');
+  if(entry){                                   // say what the extract leaves out of the session
+    const note=(n,w)=>{ const d=document.createElement('div'); d.className='gapnote';
+      d.textContent='\u00b7 \u00b7 \u00b7 '+n+' '+w+' entr'+(n===1?'y':'ies')+' not shown'; return d; };
+    const ce=c.querySelector('.entry'), before=at, after=all.length-at-1;
+    if(before>0) ce.before(note(before,'earlier'));
+    if(after>0) ce.after(note(after,'later'));
+    const st=hdr?.querySelector('.sstats'); if(st) st.textContent='whole session: '+st.textContent; }
+  if(lbl){ const s=document.createElement('span'); s.className='lbl';
+    s.append(lbl.querySelector('.sw').cloneNode(true),lbl.querySelector('.sn').cloneNode(true)); lbl.replaceWith(s); }
+  c.querySelectorAll('.forktag').forEach(t=>{ const s=document.createElement('span'); s.className='forktag';
+    s.textContent=t.textContent.replace(/\\s[0-9a-f]{8}$/,' session'); t.replaceWith(s); });
+  c.querySelectorAll('.share,.emark').forEach(el=>el.remove());
+  c.querySelectorAll('a[href^="#"]').forEach(a=>{ const s=document.createElement('span'); s.className=a.className; s.textContent=a.textContent; a.replaceWith(s); });
+  c.querySelectorAll('[id]').forEach(el=>el.removeAttribute('id'));
+  c.querySelectorAll('*').forEach(el=>{ for(const a of [...el.attributes]) if(a.name.startsWith('data-')) el.removeAttribute(a.name); });
+  c.querySelectorAll('.ask.clip').forEach(el=>{ el.classList.remove('clip'); el.removeAttribute('title'); });
+  const es=entry?[entry]:[...block.querySelectorAll('.entry[data-ts]')];
+  const first=es[0]?.dataset.ts, last=es[es.length-1]?.dataset.ts;
+  const when=first?fmtDay(first)+(last&&fmtDay(last)!==fmtDay(first)?' \u2192 '+fmtDay(last):''):'';
+  const sn=hdr?.querySelector('.sn')?.textContent||'session', unit=entry?'entry':'session';
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    +'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="session-atlas">'
+    +(SHARED_ICON?'<link rel="icon" type="image/svg+xml" href="'+SHARED_ICON+'">':'')
+    +'<title>'+escH(PROJECT)+' \u00b7 '+escH(sn)+'</title><style>'+PAGE_CSS+'</style></head><body class="shared"><div class="wrap">'
+    +'<header class="hero"><h1>'+escH(PROJECT)+'</h1><div class="path">'+escH(PROJECT_PATH)+'</div>'
+    +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 entry <b>'+(at+1)+' of '+all.length+'</b>':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
+    +'<div class="log">'+c.outerHTML+'</div>'
+    +'<footer>shared via <a href="https://github.com/vtjeng/session-atlas">session-atlas</a> \u00b7 '+unit+' exported '+escH(fmtDay(new Date().toISOString()))+'</footer></div></body></html>';
+}
+function shareBlock(block,entry){
+  const n=(block.querySelector('summary.sess .sn')?.textContent||'').replace(/\\D/g,'')||'1';
+  const name=slug(PROJECT)+'--session-'+n+(entry?'--'+stampOf(entry.dataset.ts||''):'')+'.html';
+  const url=URL.createObjectURL(new Blob([extractHtml(block,entry)],{type:'text/html'}));
+  const a=document.createElement('a'); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+if(logEl) logEl.addEventListener('click',e=>{
+  const b=e.target.closest('.share'); if(!b) return;
+  e.preventDefault();                          // the button, not the summary, is the click's target
+  const block=b.closest('details.session-block'); if(!block) return;
+  shareBlock(block,b.dataset.share==='entry'?b.closest('.entry'):null);
+});
+addEventListener('keydown',e=>{                 // s: share the session at the reading line
+  if(e.metaKey||e.ctrlKey||e.altKey) return;
+  const t=e.target; if(t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable)) return;
+  if(e.key.toLowerCase()!=='s') return;
+  const block=sessions[curSessIdx]?.closest('details.session-block'); if(block){ e.preventDefault(); shareBlock(block,null); }
+});
 
 // ---- shared scroll + layout listeners ----
 let raf=0;
@@ -2367,6 +2479,9 @@ def render(tl, home=None, refreshed_at=None):
                 f'&middot; {esc(cur_session[:8])}</a> '
                 f'{tool_pill(sess_tool.get(cur_session))}'
                 f'{origin_tag(session)}'
+                f'<button type="button" class="share" data-share="session"'
+                f' title="download this session as a standalone page"'
+                f' aria-label="share this session"></button>'
                 f'<span class="stitle">{esc(stitle)}</span>'
                 f'<span class="sstats">{esc(" · ".join(bits))}</span></summary>')
             prev_ts = None
@@ -2515,11 +2630,14 @@ def render(tl, home=None, refreshed_at=None):
         nodes.append(
             f'<div class="entry {kind}{quiet}" id="{entry_ids[i]}" '
             f'data-session-index="{sess_idx.get(m["session"], 1)}" data-w="{w:.3f}"'
-            f' data-rf="{rf(m["ts"])}"'
+            f' data-rf="{rf(m["ts"])}" data-ts="{esc(m["ts"])}"'
             f' style="{_sc_var(sess_idx.get(m["session"], 1))}">'
             f'<a class="emark" href="#{entry_ids[i]}" aria-label="scroll to this entry"></a>'
             f'<a class="clock" href="#{entry_ids[i]}" title="link to this entry">'
             f'{esc(fmt_clock(m["ts"]))}</a>'
+            f'<button type="button" class="share" data-share="entry"'
+            f' title="download this entry as a standalone page"'
+            f' aria-label="share this entry"></button>'
             f'{ask}{ro}</div>')
 
     if session_open:
@@ -2528,6 +2646,7 @@ def render(tl, home=None, refreshed_at=None):
     return PAGE.format(
         generator_meta=GENERATOR_META,
         favicon=favicon_link(),
+        shared_icon=favicon_data_url(shared=True),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS + USAGE_JS,
@@ -2709,7 +2828,7 @@ PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 {favicon}
 <title>{title} · project log</title>
-<style>{css}</style></head><body class="{body_class}">
+<style>{css}</style></head><body class="{body_class}" data-shared-icon="{shared_icon}">
 {minimap}
 {topbar}
 <div class="wrap">

@@ -29,14 +29,12 @@ const CAPTURE_PADDING = 24;
     return locator.first();
   };
 
-  const capture = async (selector, description, filename) => {
-    const element = await requireFirstElement(selector, description);
-    // Preserve the element's exact raster, then add neutral space around it on
-    // a second page. PNG stores pixel width and height at byte offsets 16 and 20.
-    const raw = await element.screenshot();
+  // Preserve a raster exactly, then add neutral space around it on a second
+  // page. PNG stores pixel width and height at byte offsets 16 and 20.
+  const pad = async (raw, filename, source = page) => {
     const width = raw.readUInt32BE(16);
     const height = raw.readUInt32BE(20);
-    const background = await page.locator('body').evaluate(
+    const background = await source.locator('body').evaluate(
       body => getComputedStyle(body).backgroundColor,
     );
     const padded = await browser.newPage({
@@ -56,6 +54,11 @@ const CAPTURE_PADDING = 24;
     } finally {
       await padded.close();
     }
+  };
+
+  const capture = async (selector, description, filename) => {
+    const element = await requireFirstElement(selector, description);
+    await pad(await element.screenshot(), filename);
   };
 
   try {
@@ -98,6 +101,35 @@ const CAPTURE_PADDING = 24;
       'the first synthetic session with its log expanded',
       'expanded-timeline-entry.png',
     );
+
+    // The share glyph shows on an entry only through the page script (the
+    // entry at the reading line) or a hover, so this capture runs with
+    // JavaScript on, with the pointer over the first entry's glyph, and crops
+    // the first session to its header and first entry.
+    const live = await browser.newPage({
+      viewport: { width: 1440, height: 900 },
+      javaScriptEnabled: true,
+    });
+    try {
+      await live.goto(siteUrl(fixtureProjectHref));
+      const block = live.locator('.session-block').first();
+      const glyph = block.locator('.entry .share').first();
+      if (await glyph.count() === 0) {
+        throw new Error('The first synthetic session is missing an entry share control');
+      }
+      await glyph.hover();
+      await live.waitForTimeout(300);   // the glyph's 120 ms fade
+      const box = await block.boundingBox();
+      await pad(
+        await live.screenshot({
+          clip: { x: box.x, y: box.y, width: box.width, height: 236 },
+        }),
+        'share-control.png',
+        live,
+      );
+    } finally {
+      await live.close();
+    }
 
     const pricing = await requireFirstElement('details.pricing', 'the cost breakdown');
     await pricing.evaluate(node => { node.open = true; });
