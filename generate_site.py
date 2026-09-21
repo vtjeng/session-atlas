@@ -103,12 +103,14 @@ def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=Fals
                          "collapse or expand every session"))
         groups.append(("Sessions", rows))
     if explorer:
+        # the keys act while the chart has focus; a click on a bar pins it and
+        # focuses the chart, so it is listed first and the note says so
         groups.append(("Chart", [
+            ("click a bar", "pin the readout to it (this also focuses the chart)"),
             ("<kbd>&larr;</kbd> <kbd>&rarr;</kbd>",
-             "step the readout one bar, while the chart has focus (click it or tab to it)"),
+             "step the pinned bar; with nothing pinned, start from the last active bar"),
             ("<kbd>Home</kbd> <kbd>End</kbd>", "first and last bar"),
-            ("<kbd>Esc</kbd>", "unpin the readout"),
-            ("click a bar", "pin the readout to it"),
+            ("<kbd>Esc</kbd>", "unpin"),
             ("drag across the chart", "zoom the window to those bars"),
             ("drag the strip below the chart", "move or resize the window"),
         ]))
@@ -123,9 +125,11 @@ def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=Fals
                      "top of the page, or top of that session"))
         rows.append(("the share glyph", "download that session or entry as a page"))
         groups.append(("Page", rows))
+    notes = {"Chart": "The keys act while the chart has focus: click a bar, or tab to the chart."}
     sections = "".join(
-        f'<section><h3>{title}</h3><dl>'
-        + "".join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)
+        f'<section><h3>{title}</h3>'
+        + (f'<p class="help-note">{notes[title]}</p>' if title in notes else "")
+        + '<dl>' + "".join(f'<dt>{k}</dt><dd>{v}</dd>' for k, v in rows)
         + '</dl></section>' for title, rows in groups)
     return ('<dialog class="help" id="help" aria-labelledby="helpTitle"><div class="help-box">'
             '<div class="help-head"><h2 id="helpTitle">Shortcuts</h2>'
@@ -1295,6 +1299,7 @@ header.hero{position:relative}
   border-bottom-width:2px;border-radius:4px;background:var(--bg);font:inherit;font-size:11px;
   line-height:16px;text-align:center;color:var(--ink)}
 .help .kglyph{color:var(--dim)}
+.help-note{margin:0 0 8px;font-size:11px;line-height:16px;color:var(--dim)}
 .help-foot{margin:16px 0 0;font-size:11px;color:var(--faint)}
 @media (max-width:640px){.help dl{grid-template-columns:1fr;gap:2px 0}.help dd{margin-bottom:6px}}
 
