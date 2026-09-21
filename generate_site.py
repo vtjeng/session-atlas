@@ -1228,15 +1228,14 @@ h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em
   overflow:hidden;text-overflow:ellipsis}
 .stat .d b{color:var(--ink);font-weight:600}
 /* model turns, tool counts, and parser notes under the tiles, in the usage readout's
-   form (a label column and fixed-width cells, name left and count right) rather
-   than badges, which suggested something to click. Cells wrap in rows of the same
-   width, so the columns stay aligned. */
+   form (a label column, then the items) rather than badges, which suggested something
+   to click. Each item is its name followed by its count; items flow and wrap. */
 .meta{margin-top:26px;font-size:11px;line-height:16px;color:var(--dim)}
 .meta-line{display:flex;align-items:flex-start}
 .meta-line+.meta-line{margin-top:4px}
 .meta .uro-k{flex:0 0 64px}
-.meta-cells{display:flex;flex-wrap:wrap;gap:0 12px;min-width:0}
-.meta .ui{margin-right:0}
+.meta-cells{display:flex;flex-wrap:wrap;gap:0 18px;min-width:0}
+.mc{display:inline-flex;gap:6px;white-space:nowrap}
 .meta b{color:var(--ink);font-weight:600}
 .meta .mdl,.meta .tn{color:var(--machine)}
 .meta .mdl.fam-claude{color:var(--claude)}
@@ -2320,13 +2319,13 @@ def render(tl, home=None, refreshed_at=None):
         cells = []
         for m in real_models:
             model_turns = s["models"][m]
-            cells.append(f'<span class="ui">{_model_span(m)}<span>'
+            cells.append(f'<span class="mc">{_model_span(m)}<span>'
                          f'<b>&times;{model_turns}</b> turn{_s(model_turns)}</span></span>')
         meta_lines.append(meta_line(
             "models", cells,
             "Assistant turns attributed to this model; not sessions"))
     if s["tools"]:
-        cells = [f'<span class="ui"><span class="tn">{esc(k)}</span>'
+        cells = [f'<span class="mc"><span class="tn">{esc(k)}</span>'
                  f'<span><b>&times;{v}</b></span></span>'
                  for k, v in list(s["tools"].items())[:6]]
         meta_lines.append(meta_line("tools", cells))

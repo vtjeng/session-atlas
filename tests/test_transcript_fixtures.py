@@ -250,14 +250,14 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertIn(
             'title="Assistant turns attributed to this model; not sessions"',
             page)
-        # The hero's models and tools are readout lines (a label and fixed
-        # cells with the name left and the count right), not badges. The
-        # fixture has one Shell call, so both the hero cell and the per-turn
-        # tool readout exercise the name-before-count × syntax and shared color.
+        # The hero's models and tools are readout lines (a label, then each
+        # name followed by its count), not badges. The fixture has one Shell
+        # call, so both the hero item and the per-turn tool readout exercise
+        # the name-before-count × syntax and shared color.
         self.assertIn('<span class="uro-k">models</span>', page)
         self.assertIn('<span><b>&times;3</b> turns</span></span>', page)
         self.assertIn(
-            '<span class="ui"><span class="tn">Shell</span>'
+            '<span class="mc"><span class="tn">Shell</span>'
             '<span><b>&times;1</b></span></span>', page)
         self.assertNotIn('class="chip"', page)
         self.assertIn(
