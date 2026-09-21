@@ -1199,15 +1199,14 @@ body.has-right-rail{padding-right:56px}
   letter-spacing:.1em;text-transform:uppercase}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
-/* glyph buttons: prev/next, the fold-all caret ahead of them, and the share arrows
-   on session headers and entries */
-.snav,.sfold,.share{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+/* glyph buttons: prev/next, and the fold-all caret ahead of them */
+.snav,.sfold{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
-.snav:hover,.sfold:hover,.share:hover{border-color:var(--machine);color:var(--ink)}
+.snav:hover,.sfold:hover{border-color:var(--machine);color:var(--ink)}
 .snav:disabled{opacity:.35;cursor:default}
-.snav:focus-visible,.sfold:focus-visible,.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
+.snav:focus-visible,.sfold:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .sessnav[hidden]{display:none}
 
 /* ---- hero ---- */
@@ -1278,16 +1277,26 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 .session-block:not([open])>summary.sess::before{transform:rotate(-90deg)}
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
-/* share: a square (styled with the stepper buttons above) that downloads a standalone
-   page of its session or entry. It shows the share symbol, a tray with an arrow rising
-   from it, drawn as a mask so it takes the button's text colour. The session's sits at
-   the right end of the header's label row; an entry's sits under its clock, on the
-   clock's right edge. */
-.share::before{content:"";width:12px;height:12px;background:currentColor;
+/* share: a bare glyph that downloads a standalone page of its session or entry. The
+   symbol is a tray with an arrow rising from it, drawn as a mask so it takes the
+   button's colour: the clock's faint grey at rest, the accent on hover. The 24px box is
+   the hit target; only the 13px glyph shows. The session's flows after its badges on
+   the label row; an entry's sits under its clock and shows only on the entry at the
+   reading line (.current), on an entry under the pointer or with keyboard focus, and
+   on every entry where there is no hover. */
+.share{appearance:none;-webkit-appearance:none;width:24px;height:24px;display:inline-flex;
+  align-items:center;justify-content:center;padding:0;border:0;border-radius:4px;
+  background:none;color:var(--faint);cursor:pointer;transition:color .12s,opacity .12s}
+.share::before{content:"";width:13px;height:13px;background:currentColor;
   -webkit-mask:var(--share-icon) center/contain no-repeat;mask:var(--share-icon) center/contain no-repeat}
+.share:hover{color:var(--machine)}
+.share:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
 .share{--share-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5v4a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-4'/%3E%3Cpath d='M8 10.5V2.5M5 5.5 8 2.5l3 3'/%3E%3C/svg%3E")}
-summary.sess .share{position:absolute;right:0;top:18px}
-.entry .share{position:absolute;left:33px;top:22px}
+/* negative margins keep the 24px box from growing the label row */
+summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
+.entry .share{position:absolute;left:34px;top:19px;opacity:0}
+.entry:hover .share,.entry.current .share,.entry .share:focus-visible{opacity:1}
+@media (hover:none){.entry .share{opacity:1}}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
   letter-spacing:.08em}
 .entry{position:relative;padding:0 0 34px 92px;scroll-margin-top:72px}
@@ -1510,7 +1519,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry,.sess,.gapnote{padding-left:0}
   summary.sess::before{position:static;display:inline-block;margin-right:8px}
   summary.sess::after{display:none}
-  .entry .share{left:auto;right:0;top:-2px}   /* top right, on the clock's line */
+  .entry .share{left:auto;right:-4px;top:-4px}   /* top right, on the clock's line */
   .clock{position:static;display:block;width:auto;text-align:left;margin-bottom:4px}
   .clock::before{content:"";display:inline-block;width:7px;height:7px;
     background:var(--sc,var(--human));margin-right:8px}
@@ -1529,6 +1538,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 }
 @media (prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
+  .share{transition:none}
 }
 """
 
