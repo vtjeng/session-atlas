@@ -21,6 +21,7 @@ import itertools
 import json
 import math
 import os
+import pickle
 import re
 import tempfile
 import unicodedata
@@ -33,7 +34,7 @@ from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity,
                        _is_transcript_dir, _iter_subagent_transcripts,
                        build_timeline, find_project_dir,
                        merge_token_models, parse_iso)
-from codex_parse import (CODEX_SESSIONS, build_codex_timelines,
+from codex_parse import (CODEX_SESSIONS, _parse_rollout, build_codex_timelines,
                          build_history_only_timelines,
                          _associate_codex_subagents, iter_rollout_metas,
                          rollout_paths)
@@ -185,6 +186,99 @@ def _private_directory(path):
     """Create a generated-output directory and enforce owner-only access."""
     os.makedirs(path, mode=0o700, exist_ok=True)
     os.chmod(path, 0o700)
+
+
+def _parser_version():
+    """A digest of the two parser modules, so a parser change misses the cache."""
+    digest = hashlib.sha256()
+    for name in ("ccx_parse.py", "codex_parse.py"):
+        digest.update(Path(__file__).with_name(name).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+class ParseCache:
+    """Parsed transcripts, kept under ``<out>/.cache`` between renders.
+
+    Parsing is nearly all of a render (about 93% of the time on the author's
+    corpus), so a rebuild with unchanged transcripts should pay only for
+    rendering. A Codex session (one rollout file) is one entry; a Claude
+    project (all of its session and subagent files) is one entry, because
+    ``build_timeline`` attributes subagent work across a project's files. An
+    entry is reused while its files' sizes and modification times and the
+    parsers' source are unchanged. Entries are pickles, owner-only like the
+    pages; they hold the same private data as the pages. Deleting the
+    directory forces a full parse.
+    """
+
+    def __init__(self, out):
+        self.dir = os.path.join(out, ".cache")
+        _private_directory(self.dir)
+        self.version = _parser_version()
+        self.hits = 0
+        self.misses = 0
+        self.used = set()   # entry paths read or written this run, for prune()
+
+    def _signature(self, paths):
+        return (self.version,
+                [(p, st.st_size, st.st_mtime_ns) for p in sorted(paths)
+                 for st in (os.stat(p),)])
+
+    def _path(self, kind, name):
+        digest = hashlib.sha256(f"{kind}\x1f{name}".encode("utf-8")).hexdigest()[:32]
+        return os.path.join(self.dir, f"{kind}-{digest}.pickle")
+
+    def get(self, kind, name, paths, compute):
+        """Return the cached value for ``paths``, or ``compute()`` and store it."""
+        try:
+            signature = self._signature(paths)
+        except OSError:
+            return compute()
+        path = self._path(kind, name)
+        self.used.add(path)
+        try:
+            with open(path, "rb") as fh:
+                stored, value = pickle.load(fh)
+            if stored == signature:
+                self.hits += 1
+                return value
+        except (OSError, EOFError, ValueError, TypeError, AttributeError,
+                pickle.UnpicklingError):
+            pass
+        self.misses += 1
+        value = compute()
+        fd, tmp = tempfile.mkstemp(prefix=".cache-", suffix=".tmp", dir=self.dir)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                pickle.dump((signature, value), fh, protocol=pickle.HIGHEST_PROTOCOL)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
+        return value
+
+    def rollout_parser(self):
+        """A per-rollout parse function for ``build_codex_timelines``."""
+        return lambda path: self.get("rollout", path, [path],
+                                     lambda: _parse_rollout(path))
+
+    def prune(self):
+        """Remove entries this run did not use: their transcripts are gone."""
+        removed = 0
+        for entry in os.scandir(self.dir):
+            if entry.name.endswith(".pickle") and entry.path not in self.used:
+                try:
+                    os.unlink(entry.path)
+                    removed += 1
+                except OSError:
+                    pass
+        return removed
+
+    def summary(self):
+        return f"parse cache: {self.hits} hit{_s(self.hits)}, {self.misses} miss{'' if self.misses == 1 else 'es'}"
 
 
 def _project_slug_base(project_path):
@@ -3145,10 +3239,10 @@ def _write_project(tl, out, slug, index_path=None, refreshed_at=None):
 
 def generate_all(out, archive):
     with _render_lock(out):
-        return _generate_all_locked(out, archive)
+        return _generate_all_locked(out, archive, ParseCache(out))
 
 
-def _generate_all_locked(out, archive):
+def _generate_all_locked(out, archive, cache):
     # Build one per-project manifest first. Live and archive can each hold the
     # fuller copy of a different append-only file; choosing the largest file by
     # relative path forms the correct union and avoids decoding duplicates.
@@ -3166,7 +3260,9 @@ def _generate_all_locked(out, archive):
             if any(d.startswith(PROJECTS + os.sep) for d in dirs):
                 print(f"  skipped (no transcripts): {base}")
             continue
-        tl = build_timeline(dirs[0], session_paths=top, subagent_paths=nested)
+        tl = cache.get("claude", base, top + nested,
+                       lambda: build_timeline(dirs[0], session_paths=top,
+                                              subagent_paths=nested))
         if not tl["milestones"]:
             print(f"  skipped (no inputs): {base}")
             continue
@@ -3184,7 +3280,7 @@ def _generate_all_locked(out, archive):
             if n not in codex_files or size > codex_files[n][0]:
                 codex_files[n] = (size, p)
     codex_paths = [p for _, p in codex_files.values()]
-    codex_timelines = build_codex_timelines(codex_paths)
+    codex_timelines = build_codex_timelines(codex_paths, parse=cache.rollout_parser())
     # Every selected rollout's first metadata record is its authoritative ID.
     known_codex_ids = set()
     for path in codex_paths:
@@ -3219,6 +3315,8 @@ def _generate_all_locked(out, archive):
     for name in removed:
         print(f"Removed stale {os.path.join(out, name, 'index.html')}")
     print(f"Wrote {index_outfile} ({len(entries)} projects)")
+    pruned = cache.prune()
+    print(f"  {cache.summary()}" + (f", {pruned} stale entr{'y' if pruned == 1 else 'ies'} removed" if pruned else ""))
     print(f"  open: {Path(index_outfile).resolve().as_uri()}")
 
 
@@ -3244,7 +3342,7 @@ def main():
             # Parse under the same lock as publication. Otherwise an older
             # standalone snapshot can wait behind --all and overwrite its newer
             # project page after the full generation completes.
-            tl = _single(args.project)
+            tl = _single(args.project, ParseCache(args.out))
             project_path = tl["project_path"].rstrip("/")
             slug = _allocate_project_slugs([project_path])[project_path]
             outfile = _write_project(tl, args.out, slug)
@@ -3253,7 +3351,7 @@ def main():
         ap.error("give a project name/path, or --all")
 
 
-def _single(target):
+def _single(target, cache=None):
     """Build one project timeline from its selected Claude and Codex inputs.
 
     Primary Codex rollouts are selected by working directory. Related
@@ -3296,7 +3394,8 @@ def _single(target):
                     and repository in matched_repositories):
                 matches.append((p, (meta.get("cwd") or "").rstrip("/")))
     matched_paths = [p for p, _ in matches]
-    tls.extend(build_codex_timelines(matched_paths))
+    tls.extend(build_codex_timelines(
+        matched_paths, parse=cache.rollout_parser() if cache else _parse_rollout))
     known_codex_ids = {meta.get("id") for _, meta in metas if meta.get("id")}
     history_timelines = build_history_only_timelines(known_codex_ids)
     for timeline in history_timelines:
