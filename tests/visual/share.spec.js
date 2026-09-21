@@ -70,6 +70,8 @@ test('a session share downloads the session without its id or anchors', async ({
   expect(body).not.toContain('emark');
   expect(body).not.toMatch(/ data-/);
   expect(body).not.toContain('ask clip');
+  // The footer credits the generator and links to its repository.
+  expect(body).toContain('<footer>shared via <a href="https://github.com/vtjeng/session-atlas">session-atlas</a> · session exported ');
   // The click landed on the button, not the summary, so the session stays open.
   expect(await page.$eval('details.session-block', d => d.open)).toBe(true);
   // The extract renders on its own.

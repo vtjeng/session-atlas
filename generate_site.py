@@ -1791,7 +1791,7 @@ function extractHtml(block,entry){
     +'<header class="hero"><h1>'+escH(PROJECT)+'</h1><div class="path">'+escH(PROJECT_PATH)+'</div>'
     +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 entry <b>'+(at+1)+' of '+all.length+'</b>':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
     +'<div class="log">'+c.outerHTML+'</div>'
-    +'<footer>shared from session-atlas \u00b7 '+unit+' exported '+escH(fmtDay(new Date().toISOString()))+'</footer></div></body></html>';
+    +'<footer>shared via <a href="https://github.com/vtjeng/session-atlas">session-atlas</a> \u00b7 '+unit+' exported '+escH(fmtDay(new Date().toISOString()))+'</footer></div></body></html>';
 }
 function shareBlock(block,entry){
   const n=(block.querySelector('summary.sess .sn')?.textContent||'').replace(/\\D/g,'')||'1';
