@@ -61,8 +61,8 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   await expect(page.locator('.interval.eff')).toHaveText('hour');
   const staticBars = await page.locator('#uPlot .ubars').innerHTML();
   const staticAxis = await page.locator('#uAxis').innerHTML();
-  await page.click('.metric[data-m="tok"]');
-  await page.click('.metric[data-m="cost"]');
+  await page.selectOption('#uMet', 'tok');
+  await page.selectOption('#uMet', 'cost');
   expectSameBars(await page.locator('#uPlot .ubars').innerHTML(), staticBars);
   expect(await page.locator('#uAxis').innerHTML()).toBe(staticAxis);
   expect((await page.locator('.uaxis').innerText()).replace(/\s+/g, ' '))
@@ -105,7 +105,8 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   // example-project day carries two sessions and $3 of est. API cost.
   await page.goto(pathToFileURL(path.join(siteDir, 'index.html')).href + '?from=2026-03-15&to=2026-03-15&metric=act&interval=day');
   expect(await windowText(page)).toBe('2026-03-15 2026-03-15 · 1 day');
-  await expect(page.locator('.metric.on')).toHaveText('agent active time');
+  await expect(page.locator('#uMet')).toHaveValue('act');
+  await expect(page.locator('#uMet option:checked')).toHaveText('agent active time');
   expect((await cardText(page)).replace(/\s+/g, ' ')).toContain('SESSIONS 2 1.5 inputs per session INPUTS 3');
   // 29 minutes on the busiest day rounds up to a 40-minute top gridline.
   await expect(page.locator('#uYTop')).toHaveText('40m');
@@ -146,7 +147,7 @@ test('window presets, dates, and the hash recompute the cards', async ({ page })
   // Back to everything: the recomputed tiles equal the server render exactly,
   // the query clears, and no state change moved the page.
   await page.selectOption('#uWin', 'all');
-  await page.click('.metric[data-m="cost"]');
+  await page.selectOption('#uMet', 'cost');
   await page.click('.interval[data-i="auto"]');
   expect(await cardText(page)).toBe(serverCards);
   expect(new URL(page.url()).search).toBe('');

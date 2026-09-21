@@ -1035,8 +1035,8 @@ def _usage_html(series):
               f'{_fmt_money(v) + " est. API cost" if bk[1] else "no activity"}'
               for bk, v in zip(buckets, vals)]
     metrics = "".join(
-        f'<button type="button" class="metric{" on" if k == "cost" else ""}" '
-        f'data-m="{k}">{esc(label)}</button>' for k, label in USAGE_METRICS)
+        f'<option value="{k}"{" selected" if k == "cost" else ""}>{esc(label)}</option>'
+        for k, label in USAGE_METRICS)
     options = "".join(f'<option value="{p}">{p}d</option>' for p in USAGE_PRESETS)
     intervals = []
     for k in USAGE_INTERVALS:
@@ -1059,7 +1059,7 @@ def _usage_html(series):
     return (
         '<section class="usage" id="usage">'
         '<div class="uhead">'
-        f'<div class="seg umet" role="group" aria-label="chart metric">{metrics}</div>'
+        f'<select class="uwin umet" id="uMet" aria-label="chart metric">{metrics}</select>'
         '<div class="uctl">'
         f'<div class="seg uint" role="group" aria-label="plotting interval">{"".join(intervals)}</div>'
         '<div class="urange">'
@@ -2066,7 +2066,7 @@ const bars=plot.querySelector('.ubars'), mbars=mini.querySelector('.ubars');
 const yTop=$('uYTop'), yMid=$('uYMid'), daysEl=$('uDays');
 const fromIn=$('uFrom'), toIn=$('uTo'), winSel=$('uWin');
 const roDate=$('uRoDate'), ro1=$('uRo1'), ro2=$('uRo2'), ro3=$('uRo3'), pinBtn=$('uPin');
-const metrics=[...box.querySelectorAll('.metric')], intervals=[...box.querySelectorAll('.interval')];
+const metSel=$('uMet'), intervals=[...box.querySelectorAll('.interval')];
 const tiles={}; document.querySelectorAll('.stat[data-k]').forEach(el=>{tiles[el.dataset.k]=el;});
 let metric='cost', interval='auto', A=0, B=N-1, hot=-1, pinned=-1, cur=[], eff='day';
 const effective=()=>interval==='auto'?autoInterval(B-A+1):interval;
@@ -2217,8 +2217,7 @@ function syncUrl(){ const q=stateParams(), want=location.pathname+(q?'?'+q:'')+l
   try{ history.replaceState(null,'',want); }
   catch(e){ history.replaceState(null,'',location.pathname+location.search+(q?'#'+q:'')); } }
 function applyPreset(p){ const t=clamp(todayIdx()); if(p==='all') setWin(0,N-1); else setWin(t-(+p)+1,t); }
-function setMetric(k){ if(k===metric) return; metric=k;
-  metrics.forEach(b=>b.classList.toggle('on',b.dataset.m===k)); renderMini(); render(); }
+function setMetric(k){ if(k===metric) return; metric=k; metSel.value=k; renderMini(); render(); }
 function setIntervalMode(k){ if(k===interval) return; interval=k; pinned=-1; render(); }
 function readUrl(){
   let q=new URLSearchParams(location.search); if(![...q.keys()].length) q=new URLSearchParams(location.hash.slice(1));
@@ -2232,7 +2231,7 @@ function readUrl(){
 // ---- controls
 winSel.addEventListener('change',()=>{ if(winSel.value==='custom') return;
   applyPreset(winSel.value); winSel.value=presetOf()||'custom'; syncUrl(); });   // "7d" may already be "all"
-metrics.forEach(b=>b.addEventListener('click',()=>{setMetric(b.dataset.m); syncUrl();}));
+metSel.addEventListener('change',()=>{setMetric(metSel.value); syncUrl();});
 intervals.forEach(b=>b.addEventListener('click',()=>{ if(!b.disabled){setIntervalMode(b.dataset.i); syncUrl();} }));
 // a from-date past the to-date pulls the to-date along (and the reverse), never swaps them
 const onDate=e=>{ if(!fromIn.value||!toIn.value) return;
