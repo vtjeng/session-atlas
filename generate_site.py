@@ -124,7 +124,7 @@ def help_html(*, project, stepper=False, explorer=False, ribbon=False):
             ("drag across the chart", "zoom"),
             ("drag the strip below", "move / resize the window"),
         ]))
-    notes = {"Chart": "The keys act while the chart has focus: click a bar, or tab to the chart."}
+    notes = {"Chart": "Keys act while chart has focus. To focus, click a bar, or tab to the chart."}
     sections = "".join(
         f'<section><h3>{title}</h3>'
         + (f'<p class="help-note">{notes[title]}</p>' if title in notes else "")
