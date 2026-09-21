@@ -59,9 +59,11 @@ test('the ? key and the ? button open and close the dialog on a project page', a
   await page.click('#shelp');
   await page.mouse.click(5, 5);
   expect(await isOpen(page)).toBe(false);
-  // The fixture project has two sessions and one day of activity: sessions
-  // and page gestures are listed, the chart group is not.
-  expect(await groups(page)).toEqual(['Sessions', 'Page']);
+  // The fixture project has two sessions, a ribbon, a rail, and one day of
+  // activity: sessions, the top bar, and the page are listed, the chart is not.
+  expect(await groups(page)).toEqual(['Sessions', 'Top bar', 'Page']);
+  expect(await page.locator('#help .kribbon').count()).toBe(1);
+  expect(await page.locator('#help .share').count()).toBe(1);
   expect(await page.locator('#help').innerHTML()).toContain('<kbd>j</kbd> <kbd>k</kbd>');
   // With the dialog open, j does not step the session behind it.
   await page.keyboard.press('?');

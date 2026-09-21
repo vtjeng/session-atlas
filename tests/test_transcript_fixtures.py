@@ -109,8 +109,10 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertIn('<button type="button" class="shelp" id="shelp"', one_session)
         self.assertIn('<dialog class="help" id="help"', one_session)
         self.assertIn("<h3>Sessions</h3>", one_session)
+        self.assertIn("<h3>Top bar</h3>", one_session)
         self.assertIn("<dt><kbd>s</kbd></dt>", one_session)
         self.assertNotIn("<kbd>j</kbd>", one_session)
+        self.assertNotIn("&lsaquo;</span>", one_session.split('<dialog', 1)[1])
         self.assertNotIn("<h3>Chart</h3>", one_session)
         codex = [
             tl for tl in build_codex_timelines(

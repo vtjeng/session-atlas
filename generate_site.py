@@ -91,17 +91,30 @@ def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=Fals
     mean the time ribbon and the right-hand minimap rendered.
     """
     groups = []
+    btn = '<span class="kbtn" aria-hidden="true">{}</span>'
     if project:
         rows = []
         if stepper:
             rows.append(("<kbd>j</kbd> <kbd>k</kbd>", "next and previous session"))
         rows.append(("<kbd>s</kbd>",
-                     "share the session at the reading line, the one just under the sticky bar"))
+                     "share the session at the reading line, the one just under the top bar"))
         rows.append(("click a session header", "collapse or expand that session"))
-        if stepper:
-            rows.append(("<span class=\"kglyph\">&#9662;</span> in the sticky bar",
-                         "collapse or expand every session"))
+        rows.append(('<span class="share kicon" role="img" aria-label="the share glyph"></span>',
+                     "download that session or entry as a page"))
         groups.append(("Sessions", rows))
+        # the top bar's controls, shown as they look there
+        rows = [('<span class="kname">project name</span>', "click it: top of the page"),
+                ('<span class="ktitle">session title</span>', "click it: top of that session")]
+        if ribbon:
+            rows.append(('<span class="kribbon" role="img" aria-label="the ribbon">'
+                         '<i></i><i></i><i></i></span>',
+                         "click the ribbon: the nearest entry in time"))
+        if stepper:
+            rows.append((btn.format("&lsaquo;") + " " + btn.format("&rsaquo;"),
+                         "previous and next session"))
+            rows.append((btn.format("&#9662;"), "collapse or expand every session"))
+        rows.append((btn.format("?"), "this list"))
+        groups.append(("Top bar", rows))
     if explorer:
         # the keys act while the chart has focus; a click on a bar pins it and
         # focuses the chart, so it is listed first and the note says so
@@ -114,17 +127,9 @@ def help_html(*, project, stepper=False, explorer=False, ribbon=False, rail=Fals
             ("drag across the chart", "zoom the window to those bars"),
             ("drag the strip below the chart", "move or resize the window"),
         ]))
-    if project:
-        rows = []
-        if ribbon:
-            rows.append(("click the ribbon under the sticky bar",
-                         "jump to the nearest entry in time"))
-        if rail:
-            rows.append(("drag the rail at the right edge", "scroll the page, on wide screens"))
-        rows.append(("click the project name, or the session title",
-                     "top of the page, or top of that session"))
-        rows.append(("the share glyph", "download that session or entry as a page"))
-        groups.append(("Page", rows))
+    if project and rail:
+        groups.append(("Page", [
+            ("drag the rail at the right edge", "scroll the page, on wide screens")]))
     notes = {"Chart": "The keys act while the chart has focus: click a bar, or tab to the chart."}
     sections = "".join(
         f'<section><h3>{title}</h3>'
@@ -1264,9 +1269,9 @@ body.has-right-rail{padding-right:56px}
 .sesscount{color:var(--dim);white-space:nowrap}
 .sesscount b{color:var(--ink);font-weight:600}
 /* glyph buttons: prev/next, the fold-all caret ahead of them, and the ? that opens
-   the shortcuts dialog (the sticky bar's right end on a project page, the hero's
+   the shortcuts dialog (the top bar's right end on a project page, the hero's
    top right on the index) */
-.snav,.sfold,.shelp{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
+.snav,.sfold,.shelp,.kbtn{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;
   padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);
   color:var(--dim);cursor:pointer;font-size:13px;line-height:1;
   transition:border-color .12s,color .12s}
@@ -1298,7 +1303,19 @@ header.hero{position:relative}
 .help kbd{display:inline-block;min-width:18px;padding:0 5px;border:1px solid var(--line);
   border-bottom-width:2px;border-radius:4px;background:var(--bg);font:inherit;font-size:11px;
   line-height:16px;text-align:center;color:var(--ink)}
-.help .kglyph{color:var(--dim)}
+/* samples of the top bar's controls: the name in its serif, the title with its
+   bullet, a miniature ribbon, and the share glyph (styled by .share, not a button here) */
+.help .kbtn{vertical-align:middle;cursor:default}
+.help .kname{font-family:var(--serif);font-size:14px;color:var(--ink)}
+.help .ktitle{color:var(--dim)}
+.help .ktitle::before{content:"\\2022";margin:0 6px 0 1px;color:var(--faint)}
+.help .kribbon{position:relative;display:inline-block;width:72px;height:12px;vertical-align:middle}
+.help .kribbon::before{content:"";position:absolute;left:0;right:0;top:6px;height:1px;background:var(--line)}
+.help .kribbon i{position:absolute;top:2px;width:8px;height:8px;border-radius:50%;border:1px solid var(--bg);
+  box-sizing:border-box;background:var(--s1)}
+.help .kribbon i:nth-child(2){left:28px;background:var(--s2)}
+.help .kribbon i:nth-child(3){left:60px;background:var(--s3)}
+.help .kicon{vertical-align:middle;cursor:default}
 .help-note{margin:0 0 8px;font-size:11px;line-height:16px;color:var(--dim)}
 .help-foot{margin:16px 0 0;font-size:11px;color:var(--faint)}
 @media (max-width:640px){.help dl{grid-template-columns:1fr;gap:2px 0}.help dd{margin-bottom:6px}}
@@ -1623,7 +1640,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
   .entry.current .clock::before{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc,var(--human)) 40%,transparent)}
 }
 /* on the narrowest phones (<=360px) the crumb + stepper stop fitting on one line
-   even with the title and name ellipsized, so the sticky bar stacks them. The
+   even with the title and name ellipsized, so the top bar stacks them. The
    explicit width:100% is needed because align-items:stretch alone won't shrink the
    crumb (a flex container) below its content — width:100% gives it a definite size
    so its title ellipsizes to fit. */
