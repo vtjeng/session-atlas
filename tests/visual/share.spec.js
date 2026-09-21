@@ -70,6 +70,13 @@ test('a session share downloads the session without its id or anchors', async ({
   expect(body).not.toContain('emark');
   expect(body).not.toMatch(/ data-/);
   expect(body).not.toContain('ask clip');
+  // The extract's tab icon is the atlas's favicon with its background and
+  // stroke swapped: the page's own icon has a dark rect and a cream stroke.
+  const icon = /<link rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,([^"]+)">/.exec(html);
+  expect(icon).not.toBeNull();
+  const svg = decodeURIComponent(icon[1]);
+  expect(svg).toContain('<rect width="64" height="64" rx="13" fill="#e9e6df"/>');
+  expect(svg).toContain('stroke="#15171b"');
   // The footer credits the generator and links to its repository.
   expect(body).toContain('<footer>shared via <a href="https://github.com/vtjeng/session-atlas">session-atlas</a> · session exported ');
   // The click landed on the button, not the summary, so the session stays open.

@@ -348,12 +348,14 @@ right-hand gutter so switching between project pages does not shift the layout.
 
 #### Sharing a session or an entry
 
-Click the share button (three linked dots) at the right of a session header,
-or under an entry's clock, to download a standalone page that holds that
-session or that entry with the atlas's styling. Press `s` to share the session at the reading line.
+Click the share button (a tray with an arrow rising from it) at the right of
+a session header, or under an entry's clock, to download a standalone page
+that holds that session or that entry with the atlas's styling. Press `s` to share the session at the reading line.
 The file is named after the project and the session, with the entry's local
 date and time appended for an entry. It carries no script: the expandable logs
-and the session fold work through the browser. An entry's page says which
+and the session fold work through the browser. Its tab icon is the atlas's
+with the colours swapped, so a shared page is told apart from a project
+page. An entry's page says which
 entry of the session it is, notes above and below the entry how many earlier
 and later entries are not shown, and labels the header's totals as the whole
 session's.

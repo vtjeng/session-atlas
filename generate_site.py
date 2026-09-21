@@ -56,12 +56,29 @@ _MAX_PROJECT_SLUG = 80
 MINIMAP_MAX_ENTRIES = 1000
 
 
-@functools.lru_cache(maxsize=1)
+# The favicon's background and stroke colours; a shared page swaps them.
+_ICON_BACKGROUND = "#15171b"
+_ICON_STROKE = "#e9e6df"
+
+
+@functools.lru_cache(maxsize=2)
+def favicon_data_url(shared=False):
+    """Return the favicon as an SVG data URL.
+
+    With ``shared``, the icon's background and stroke are swapped, so the tab
+    of a page downloaded with a share button differs from a project page's.
+    """
+    svg = Path(__file__).with_name("favicon.svg").read_text(encoding="utf-8")
+    if shared:
+        svg = (svg.replace(_ICON_BACKGROUND, "\0")
+               .replace(_ICON_STROKE, _ICON_BACKGROUND)
+               .replace("\0", _ICON_STROKE))
+    return f"data:image/svg+xml,{quote(svg, safe='')}"
+
+
 def favicon_link():
     """Return the standalone-page favicon as an embedded SVG data URL."""
-    svg = Path(__file__).with_name("favicon.svg").read_text(encoding="utf-8")
-    return (f'<link rel="icon" type="image/svg+xml" '
-            f'href="data:image/svg+xml,{quote(svg, safe="")}">')
+    return f'<link rel="icon" type="image/svg+xml" href="{favicon_data_url()}">'
 
 # ------------------------------------------------------------------ helpers -- #
 def esc(s):
@@ -1262,13 +1279,13 @@ summary.sess::after{content:"";position:absolute;left:56px;top:22px;width:24px;h
 summary.sess:hover::before{background:var(--ink)}
 summary.sess:focus-visible{outline:2px solid var(--machine);outline-offset:4px;border-radius:2px}
 /* share: a square (styled with the stepper buttons above) that downloads a standalone
-   page of its session or entry. It shows the share symbol, three dots joined by two
-   lines, drawn as a mask so it takes the button's text colour. The session's sits at
+   page of its session or entry. It shows the share symbol, a tray with an arrow rising
+   from it, drawn as a mask so it takes the button's text colour. The session's sits at
    the right end of the header's label row; an entry's sits under its clock, on the
    clock's right edge. */
-.share::before{content:"";width:11px;height:11px;background:currentColor;
+.share::before{content:"";width:12px;height:12px;background:currentColor;
   -webkit-mask:var(--share-icon) center/contain no-repeat;mask:var(--share-icon) center/contain no-repeat}
-.share{--share-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='12.5' cy='3' r='2.2'/%3E%3Ccircle cx='12.5' cy='13' r='2.2'/%3E%3Ccircle cx='3.5' cy='8' r='2.2'/%3E%3Cpath d='M5.3 7.1 10.7 4.1M5.3 8.9 10.7 11.9' stroke='%23000' stroke-width='1.6' fill='none'/%3E%3C/svg%3E")}
+.share{--share-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5v4a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5v-4'/%3E%3Cpath d='M8 10.5V2.5M5 5.5 8 2.5l3 3'/%3E%3C/svg%3E")}
 summary.sess .share{position:absolute;right:0;top:18px}
 .entry .share{position:absolute;left:33px;top:22px}
 .gapnote{padding-left:92px;margin:-8px 0 16px;font-size:10.5px;color:var(--faint);
@@ -1750,6 +1767,7 @@ paintFold();
 // clipping, which the page script expands and the extract cannot. ----
 const PROJECT=document.querySelector('.hero h1')?.textContent||document.title;
 const PROJECT_PATH=document.querySelector('.hero .path')?.textContent||'';
+const SHARED_ICON=document.body.dataset.sharedIcon||'';   // the favicon with its colours swapped
 const PAGE_CSS=[...document.querySelectorAll('head style')].map(s=>s.textContent).join('\\n');
 const p2=n=>String(n).padStart(2,'0');
 const fmtDay=iso=>{const d=new Date(iso);return isNaN(d)?'':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});};
@@ -1787,6 +1805,7 @@ function extractHtml(block,entry){
   const sn=hdr?.querySelector('.sn')?.textContent||'session', unit=entry?'entry':'session';
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
     +'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="generator" content="session-atlas">'
+    +(SHARED_ICON?'<link rel="icon" type="image/svg+xml" href="'+SHARED_ICON+'">':'')
     +'<title>'+escH(PROJECT)+' \u00b7 '+escH(sn)+'</title><style>'+PAGE_CSS+'</style></head><body class="shared"><div class="wrap">'
     +'<header class="hero"><h1>'+escH(PROJECT)+'</h1><div class="path">'+escH(PROJECT_PATH)+'</div>'
     +'<div class="range"><b>'+escH(sn)+'</b>'+(entry?' \u00b7 entry <b>'+(at+1)+' of '+all.length+'</b>':'')+(when?' \u00b7 <b>'+escH(when)+'</b>':'')+'</div></header>'
@@ -2617,6 +2636,7 @@ def render(tl, home=None, refreshed_at=None):
     return PAGE.format(
         generator_meta=GENERATOR_META,
         favicon=favicon_link(),
+        shared_icon=favicon_data_url(shared=True),
         provenance=PAGE_PROVENANCE,
         title=esc(tl["project_name"]),
         css=CSS, js=JS + REFRESH_JS + USAGE_JS,
@@ -2798,7 +2818,7 @@ PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 {favicon}
 <title>{title} · project log</title>
-<style>{css}</style></head><body class="{body_class}">
+<style>{css}</style></head><body class="{body_class}" data-shared-icon="{shared_icon}">
 {minimap}
 {topbar}
 <div class="wrap">
