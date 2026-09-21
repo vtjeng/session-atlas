@@ -206,16 +206,32 @@ class AccountingTests(unittest.TestCase):
             self.assertTrue(label)
             self.assertTrue(help_text)
 
-    def test_model_breakdowns_use_shared_family_capability_order(self):
+    def test_model_breakdowns_follow_the_rates_table_order(self):
+        # The cost and token tables list models as the rates table does:
+        # families together, newest first, and a model with no rate last.
         model_ids = [
             "gpt-5.6-sol", "claude-opus-5", "gpt-5.3-codex",
             "claude-haiku-4-5", "claude-sonnet-5", "codex-auto-review",
+            "claude-fable-5", "claude-fable-5-1",
         ]
         ordered = sorted(model_ids, key=generate_site._model_sort_key)
         self.assertEqual(ordered, [
-            "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5",
-            "gpt-5.3-codex", "gpt-5.6-sol", "codex-auto-review",
+            "claude-fable-5-1", "claude-fable-5", "claude-opus-5",
+            "claude-sonnet-5", "claude-haiku-4-5",
+            "gpt-5.6-sol", "gpt-5.3-codex", "codex-auto-review",
         ])
+        self.assertEqual(ordered[:5], [
+            m for m in pricing.PRICES if m in ordered][:5])
+
+    def test_panel_tables_share_one_column_grid(self):
+        # Every table sets its width to its columns' sum, so fixed layout
+        # applies and a category column is the same width in each: a
+        # seven-column matrix is 120 + 6 * 90 = 660px, the six-column rates
+        # table 570px.
+        seven = generate_site._grid_open(["model", "a", "b", "c", "d", "e", "total"])
+        six = generate_site._grid_open(["model", "a", "b", "c", "d", "e"])
+        self.assertIn('<table class="grid" style="width:660px">', seven)
+        self.assertIn('<table class="grid" style="width:570px">', six)
 
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {

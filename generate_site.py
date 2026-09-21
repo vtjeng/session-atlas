@@ -488,6 +488,7 @@ def _rate(x):
 
 
 _GRID_CLOSE = "</tbody></table></div>"
+_GRID_MODEL_COL, _GRID_COL = 120, 90   # px; a seven-column matrix is 660px wide
 
 
 def _grid_open(headers):
@@ -496,7 +497,11 @@ def _grid_open(headers):
     Pair with ``_GRID_CLOSE``."""
     cols = '<col class="cm">' + "<col>" * (len(headers) - 1)
     ths = "".join(f"<th>{h}</th>" for h in headers)
-    return (f'<div class="tw"><table class="grid"><colgroup>{cols}</colgroup>'
+    # A definite width, the columns' sum, is what makes fixed layout apply, so
+    # the same column has the same width in every table of the panel.
+    width = _GRID_MODEL_COL + _GRID_COL * (len(headers) - 1)
+    return (f'<div class="tw"><table class="grid" style="width:{width}px">'
+            f'<colgroup>{cols}</colgroup>'
             f"<thead><tr>{ths}</tr></thead><tbody>")
 
 
@@ -507,29 +512,14 @@ def _model_td(mid):
     return f'<td{cls}>{esc(clean_model(mid))}</td>'
 
 
-_MODEL_DISPLAY_ORDER = (
-    # Keep the familiar families together, with capability tiers increasing.
-    "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-5",
-    "claude-opus-4-6",
-    "claude-opus-4-8",
-    "claude-opus-5",
-    "claude-fable-5",
-    "claude-fable-5-1",
-    "gpt-5.3-codex",
-    "gpt-5.4",
-    "gpt-5.5",
-    "gpt-5.6-luna",
-    "gpt-5.6-terra",
-    "gpt-5.6-sol",
-    "gpt-5.6",
-)
+# The cost and token tables list models in the rates table's order, which is
+# the order of pricing.PRICES: families together, newest first.
+_MODEL_DISPLAY_ORDER = tuple(pricing.PRICES)
 _MODEL_DISPLAY_RANK = {mid: rank for rank, mid in enumerate(_MODEL_DISPLAY_ORDER)}
 
 
 def _model_sort_key(mid):
-    """Sort known models by family and curated low-to-high capability tier."""
+    """Sort known models by family, then in the rates table's order."""
     fam = model_family(mid)
     family_rank = {"claude": 0, "gpt": 1}.get(fam, 2)
     rank = _MODEL_DISPLAY_RANK.get(mid)
@@ -1579,8 +1569,8 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .rotools .tn{color:var(--machine)}
 .rotools .tool-count{color:var(--ink)}
 details.more{margin-top:9px;border-top:1px dashed var(--line);padding-top:8px}
-details.more>summary{cursor:pointer;font-size:11px;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--faint);list-style:none;user-select:none}
+details.more>summary{cursor:pointer;font-size:11px;color:var(--dim);list-style:none;
+  user-select:none}
 details.more>summary::-webkit-details-marker{display:none}
 details.more>summary::before{content:"\\25B8  "}
 details.more[open]>summary::before{content:"\\25BE  "}
@@ -1606,19 +1596,19 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
   font-size:11px;color:var(--faint);text-align:center}
 .pricing{margin-top:22px}
+/* a plain disclosure line: tertiary information sits below the models and tools
+   lines in weight, not in a bordered button above them */
 .pricing>summary{cursor:pointer;display:inline-flex;align-items:center;gap:7px;
-  font-size:12px;font-weight:600;letter-spacing:.01em;color:var(--dim);
-  padding:6px 12px;border:1px solid var(--line);border-radius:6px;
-  background:var(--panel);list-style:none;
-  transition:border-color .12s,color .12s,background .12s}
+  font-size:12px;color:var(--dim);padding:0;list-style:none;transition:color .12s}
 .pricing>summary::-webkit-details-marker{display:none}
 .pricing>summary::before{content:"\\25B8";color:var(--faint);font-size:10px}
 .pricing[open]>summary::before{content:"\\25BE"}
-.pricing[open]>summary{color:var(--ink);border-color:var(--spine)}
-.pricing>summary:hover{border-color:var(--machine);color:var(--ink);background:var(--panel2)}
+.pricing[open]>summary{color:var(--ink)}
+.pricing>summary:hover{color:var(--ink)}
 .pricing>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-.pricing-body{max-width:660px;margin:14px 0 0;text-align:left;
-  color:var(--dim);font-size:12px;line-height:1.55}
+/* the prose takes the column's width like the lines above it; the tables below
+   keep their own widths */
+.pricing-body{margin:14px 0 0;text-align:left;color:var(--dim);font-size:12px;line-height:1.55}
 .pricing-body p{margin:0 0 9px}
 .pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
 .pricing-body li{padding-left:2px}
@@ -1630,11 +1620,12 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing th:first-child,.pricing td:first-child{text-align:left}
 .pricing thead th{color:var(--faint);font-weight:600;border-top:none;
   font-size:10px;letter-spacing:.03em}
-/* fixed-column grid shared by the cost and token-count matrices; the rate
-   table reuses their model and token-category widths but omits the total column */
-.pricing table.grid{table-layout:fixed;width:auto}
+/* the cost, token-count, and rate tables share one column grid, so a category
+   sits at the same x in each; each table's width is set inline to its columns'
+   sum, which is what lets fixed layout apply (the rate table has no total column) */
+.pricing table.grid{table-layout:fixed}
 .pricing table.grid col{width:90px}
-.pricing table.grid col.cm{width:124px}
+.pricing table.grid col.cm{width:120px}
 .pricing td.mdl{color:var(--machine)}
 .pricing td.mdl.fam-claude{color:var(--claude)}
 .pricing td.mdl.fam-gpt{color:var(--codex)}
