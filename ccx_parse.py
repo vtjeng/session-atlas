@@ -418,7 +418,7 @@ def _subagent_usage(path, diagnostics=None):
 
 
 def _attribute_subagents(project_dir, milestones, sessions, paths=None,
-                         diagnostics=None):
+                         diagnostics=None, usage=None):
     """Fold nested subagent/workflow token usage into the spawning milestone.
 
     Attribution is by time: use the latest same-session milestone at or before
@@ -444,8 +444,9 @@ def _attribute_subagents(project_dir, milestones, sessions, paths=None,
 
     session_cutoff = {s["id"]: parse_iso(s.get("last_ts")) for s in sessions}
     paths = paths if paths is not None else _iter_subagent_transcripts(project_dir)
+    usage = usage or _subagent_usage   # the site generator passes a cached reader
     for path in paths:
-        by_model, start = _subagent_usage(path, diagnostics)
+        by_model, start = usage(path, diagnostics)
         if not by_model:
             continue
         parts = os.path.normpath(path).split(os.sep)
@@ -466,7 +467,8 @@ def _attribute_subagents(project_dir, milestones, sessions, paths=None,
             _add_tokens(a, mid, tk["in"], tk["out"], tk["cr"], tk["cc"], tk["cc1h"])
 
 
-def build_timeline(project_dir, session_paths=None, subagent_paths=None):
+def build_timeline(project_dir, session_paths=None, subagent_paths=None,
+                   subagent_usage=None):
     diagnostics = []
     per_file = _load_records(project_dir, session_paths, diagnostics)
     milestones = []
@@ -591,7 +593,7 @@ def build_timeline(project_dir, session_paths=None, subagent_paths=None):
     # Roll nested subagent/workflow token usage into the milestones that spawned it,
     # before aggregation so it reaches every cost figure.
     _attribute_subagents(
-        project_dir, milestones, sessions, subagent_paths, diagnostics)
+        project_dir, milestones, sessions, subagent_paths, diagnostics, usage=subagent_usage)
 
     project_path = real_cwd or unmunge(project_dir)
     return _timeline_dict(

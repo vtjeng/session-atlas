@@ -6,6 +6,7 @@ from unittest import mock
 
 import generate_site
 from codex_parse import build_codex_timelines, rollout_paths
+from ccx_parse import _subagent_usage
 from generate_site import ParseCache
 
 
@@ -98,6 +99,57 @@ class ParseCacheTests(unittest.TestCase):
         self.assertEqual(second.prune(), 1)
         self.assertEqual(len(os.listdir(second.dir)), 1)
         self.assertEqual(second.hits, 1)
+
+    def subagent_file(self):
+        # A nested transcript in Claude's shape: one message streamed as two
+        # assistant records with growing usage (the reader keeps the field-wise
+        # maximum), a second message on another model, and one malformed
+        # assistant line that becomes a diagnostic (the reader decodes only
+        # lines that look like assistant records once it has a start time).
+        path = os.path.join(self.tmp.name, "agent-1.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write('{"type":"assistant","timestamp":"2026-03-15T09:42:00.000Z",'
+                     '"message":{"id":"m1","model":"opus-4-8",'
+                     '"usage":{"input_tokens":10,"output_tokens":5}}}\n')
+            fh.write('{"type":"assistant","timestamp":"2026-03-15T09:42:01.000Z",'
+                     '"message":{"id":"m1","model":"opus-4-8",'
+                     '"usage":{"input_tokens":10,"output_tokens":40}}}\n')
+            fh.write('{"type":"assistant","message":{broken\n')
+            fh.write('{"type":"assistant","timestamp":"2026-03-15T09:43:00.000Z",'
+                     '"message":{"id":"m2","model":"sonnet-5",'
+                     '"usage":{"input_tokens":7,"output_tokens":3}}}\n')
+        return path
+
+    def test_subagent_usage_is_reused_with_its_diagnostics(self):
+        path = self.subagent_file()
+        direct_diags = []
+        direct = _subagent_usage(path, direct_diags)
+        first = ParseCache(self.out)
+        first_diags = []
+        self.assertEqual(first.subagent_usage()(path, first_diags), direct)
+        second = ParseCache(self.out)
+        second_diags = []
+        self.assertEqual(second.subagent_usage()(path, second_diags), direct)
+        # 40 output tokens: the field-wise maximum of the two m1 records, not
+        # their sum; the malformed line is reported on a hit as on a miss.
+        self.assertEqual(direct[0]["opus-4-8"]["out"], 40)
+        self.assertEqual(len(direct_diags), 1)
+        self.assertEqual(first_diags, direct_diags)
+        self.assertEqual(second_diags, direct_diags)
+        self.assertEqual((first.hits, first.misses), (0, 1))
+        self.assertEqual((second.hits, second.misses), (1, 0))
+
+    def test_touch_keeps_subagent_entries_through_prune(self):
+        path = self.subagent_file()
+        ParseCache(self.out).subagent_usage()(path, [])
+        # A later run reuses the project without reading the subagent entry;
+        # touching it marks it as still belonging to the corpus.
+        later = ParseCache(self.out)
+        self.assertEqual(later.prune(), 1)
+        ParseCache(self.out).subagent_usage()(path, [])
+        kept = ParseCache(self.out)
+        kept.touch("subagent", [path])
+        self.assertEqual(kept.prune(), 0)
 
     def test_codex_timelines_are_the_same_through_the_cache(self):
         paths = rollout_paths(os.path.join(FIXTURES, "codex"))

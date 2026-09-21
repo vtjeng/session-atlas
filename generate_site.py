@@ -30,7 +30,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity,
+from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity, _subagent_usage,
                        _is_transcript_dir, _iter_subagent_transcripts,
                        build_timeline, find_project_dir,
                        merge_token_models, parse_iso)
@@ -264,6 +264,34 @@ class ParseCache:
         """A per-rollout parse function for ``build_codex_timelines``."""
         return lambda path: self.get("rollout", path, [path],
                                      lambda: _parse_rollout(path))
+
+    def subagent_usage(self):
+        """A per-file subagent usage reader for ``build_timeline``.
+
+        Reading every subagent transcript is about half of a Claude project's
+        parse, so each file's usage and the diagnostics it produced are one
+        entry, and a project that is parsed again reuses them.
+        """
+        def compute(path):
+            found = []
+            return _subagent_usage(path, found), found
+
+        def usage(path, diagnostics=None):
+            (by_model, start), found = self.get("subagent", path, [path],
+                                                lambda: compute(path))
+            if diagnostics is not None:
+                diagnostics.extend(found)
+            return by_model, start
+        return usage
+
+    def touch(self, kind, names):
+        """Mark entries as used without reading them, so prune keeps them.
+
+        A cached Claude project is reused without reading its subagent
+        entries; those still belong to the corpus.
+        """
+        for name in names:
+            self.used.add(self._path(kind, name))
 
     def prune(self):
         """Remove entries this run did not use: their transcripts are gone."""
@@ -3259,7 +3287,9 @@ def _generate_all_locked(out, archive, cache):
             continue
         tl = cache.get("claude", base, top + nested,
                        lambda: build_timeline(dirs[0], session_paths=top,
-                                              subagent_paths=nested))
+                                              subagent_paths=nested,
+                                              subagent_usage=cache.subagent_usage()))
+        cache.touch("subagent", nested)
         if not tl["milestones"]:
             print(f"  skipped (no inputs): {base}")
             continue
@@ -3358,7 +3388,8 @@ def _single(target, cache=None):
     tls = []
     path = None
     try:
-        tl = build_timeline(find_project_dir(target))
+        tl = build_timeline(find_project_dir(target),
+                            subagent_usage=cache.subagent_usage() if cache else None)
         path = tl["project_path"].rstrip("/")
         tls.append(tl)
     except SystemExit as e:
