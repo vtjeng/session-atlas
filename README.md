@@ -76,7 +76,8 @@ the session or entry it came from, including tool arguments and paths; see
 
 Git ignores `site/` and `archive/`. A normal clone therefore contains the
 source code, tests, documentation, and optional systemd units, but it does not
-contain your local transcripts, generated pages, or local archive.
+contain your local transcripts, generated pages, local archive, or the parse
+cache under `site/.cache`.
 
 The generator sets site directories to owner-only mode `0700` and generated
 HTML and lock files to owner-only mode `0600`.
@@ -220,6 +221,27 @@ footer.
 The supplied timer renders only. Automatic archiving is a separate opt-in
 because archived copies can outlive source cleanup. Configure an archive job
 using the destination and privacy procedure below.
+
+### Reuse parsed transcripts between renders
+
+Parsing the transcripts takes almost all of a render, so `generate_site.py`
+saves what it parsed under `<out>/.cache` and reuses it next time. A saved
+entry is reused while its transcript files have the same size and modification
+time as before and the parser code has not changed.
+
+- A Codex session is one entry. When one Codex conversation grows, only that
+  session is parsed again.
+- A Claude project is one entry that covers all of its sessions. When one
+  Claude conversation grows, that whole project is parsed again, and every
+  other project is reused.
+
+A render with no new activity therefore takes only the rendering time, about 6
+seconds on the author's machine against 96 seconds for a full parse, and a
+render after new activity parses only the sessions or projects that changed.
+The last line of a `--all` run says how many entries were reused (hits) and how
+many were parsed (misses). A full build removes entries whose transcripts no
+longer exist. The cache is owner-only and holds the same private data as the
+pages; delete the directory to force a full parse.
 
 ### Archive transcripts
 

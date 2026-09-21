@@ -587,14 +587,18 @@ def _associate_codex_subagents(sessions, milestones):
                      for m in by_session.get(session["id"], [])]
 
 
-def build_codex_timelines(paths=None):
+def build_codex_timelines(paths=None, parse=None):
     """Parse rollouts (all, or just `paths`) -> list of ccx-shaped timeline dicts,
-    one per distinct cwd, sessions in chronological (filename) order."""
+    one per distinct cwd, sessions in chronological (filename) order.
+
+    ``parse`` replaces ``_parse_rollout`` for one path at a time; the site
+    generator passes a cached version."""
+    parse = parse or _parse_rollout
     if paths is None:
         paths = [p for p, _ in iter_rollout_metas()]
     projects = {}  # cwd -> sessions, milestones, branches, and diagnostics
     for path in sorted(paths):
-        got = _parse_rollout(path)
+        got = parse(path)
         if not got:
             continue
         cwd, sess, ms, branches, diagnostics = got
