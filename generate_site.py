@@ -488,7 +488,7 @@ def _rate(x):
 
 
 _GRID_CLOSE = "</tbody></table></div>"
-_GRID_MODEL_COL, _GRID_COL = 120, 90   # px; a seven-column matrix is 660px wide
+_GRID_MODEL_COL, _GRID_COL = 120, 88   # px; a seven-column matrix is 648px, the panel body's width
 
 
 def _grid_open(headers):
@@ -1281,6 +1281,10 @@ CSS = """
   --claude:#d98a5c; --codex:#57b08a;
   --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+  /* reading measures: a prose line stops at about 70 characters of the serif (62ch;
+     its average letter is narrower than its zero) or 80 of the mono, however wide
+     the box around it */
+  --measure:62ch; --measure-mono:80ch;
   color-scheme:dark;
 }
 @media (prefers-color-scheme:light){
@@ -1370,6 +1374,9 @@ button{font:inherit;color:inherit}
   border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
 body{padding-right:0}
 body.has-right-rail{padding-right:56px}
+/* the padding keeps the column clear of the rail; where there is room, shift the
+   column back right by half of it, so it sits where the index page's column does */
+body.has-right-rail .wrap{position:relative;left:clamp(0px,calc((100% - 880px) / 2),28px)}
 @media (max-width:759px){.minimap{display:none}body.has-right-rail{padding-right:0}}
 .sessnav{display:flex;align-items:center;gap:8px;flex:0 0 auto;
   letter-spacing:.1em;text-transform:uppercase}
@@ -1536,7 +1543,7 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
 .clock{position:absolute;left:0;top:3px;width:52px;text-align:right;
   font-size:11px;color:var(--faint);text-decoration:none}
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
-.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:62ch;
+.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:var(--measure);
   white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal{font-family:var(--mono);font-size:13px;line-height:1.45;max-width:100%;
   white-space:nowrap;overflow-x:auto;color:var(--dim)}
@@ -1556,7 +1563,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
   border-radius:50%}
 
 /* machine readout */
-.ro{margin-top:12px;max-width:660px;background:var(--panel);border:1px solid var(--line);
+.ro{margin-top:12px;background:var(--panel);border:1px solid var(--line);
   border-radius:8px;padding:10px 14px 11px;font-size:12px;color:var(--dim)}
 .rostat{display:flex;flex-wrap:wrap;gap:4px 16px}
 .rostat b{color:var(--ink);font-weight:600}
@@ -1582,8 +1589,9 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 .response-item+.response-item{margin-top:9px}
 .response-meta{margin-bottom:3px;font-size:11px;
   letter-spacing:.02em;color:var(--faint)}
-.response-text{font-family:var(--serif);font-size:13px;line-height:1.45;color:var(--dim)}
-.gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
+.response-text{max-width:var(--measure);font-family:var(--serif);font-size:13px;line-height:1.45;
+  color:var(--dim)}
+.gist{max-width:var(--measure-mono);margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
 .files{margin-top:10px}
 .files .detail-heading{margin-bottom:5px}
@@ -1606,9 +1614,12 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing[open]>summary{color:var(--ink)}
 .pricing>summary:hover{color:var(--ink)}
 .pricing>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-/* the prose takes the column's width like the lines above it; the tables below
-   keep their own widths */
-.pricing-body{margin:14px 0 0;text-align:left;color:var(--dim);font-size:12px;line-height:1.55}
+/* the body is one block as wide as its tables, centered in the column. That width is
+   the 832px column less the log's 92px gutter on each side, so at full width the
+   body lines up with the timeline's entries. Its prose keeps to the reading measure. */
+.pricing-body{max-width:648px;margin:14px auto 0;text-align:left;color:var(--dim);
+  font-size:12px;line-height:1.55}
+.pricing-body>p,.pricing-body>ul{max-width:var(--measure-mono)}
 .pricing-body p{margin:0 0 9px}
 .pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
 .pricing-body li{padding-left:2px}
@@ -1624,7 +1635,7 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
    sits at the same x in each; each table's width is set inline to its columns'
    sum, which is what lets fixed layout apply (the rate table has no total column) */
 .pricing table.grid{table-layout:fixed}
-.pricing table.grid col{width:90px}
+.pricing table.grid col{width:88px}
 .pricing table.grid col.cm{width:120px}
 .pricing td.mdl{color:var(--machine)}
 .pricing td.mdl.fam-claude{color:var(--claude)}
@@ -1729,7 +1740,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .brush .grip.r{right:-4px}
 .uminiaxis{display:flex;justify-content:space-between;margin:4px 0 0 var(--ugut);
   font-size:10px;line-height:16px;color:var(--faint)}
-.uhelp{margin:8px 0 0;font-size:11px;line-height:16px;color:var(--faint)}
+.uhelp{max-width:var(--measure-mono);margin:8px 0 0;font-size:11px;line-height:16px;color:var(--faint)}
 
 @media (max-width:640px){
   /* the readout's lines get two lines each, at a fixed height so the frame stays
@@ -2943,8 +2954,9 @@ def short_path(p, tl):
 # The index shares the project-page CSS wholesale (same tokens, hero, footer);
 # these rules only add the project shelf. Unused log selectors cost nothing.
 INDEX_CSS = """
+/* inset by a card's border and padding, so the dates sit over the strips' ends */
 .axislbl{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);
-  margin:30px 0 8px}
+  margin:30px 0 8px;padding:0 21px}
 .shelf{display:grid;gap:14px;padding-bottom:10px}
 a.proj{display:block;padding:16px 20px 14px;border:1px solid var(--line);border-radius:8px;
   background:var(--panel);text-decoration:none;transition:border-color .12s}
@@ -2955,8 +2967,9 @@ a.proj:hover,a.proj:focus-visible{border-color:var(--machine);outline:none}
 .ppath{font-size:11px;color:var(--faint);margin-top:1px;word-break:break-all}
 .strip{position:relative;height:30px;margin-top:12px;border-bottom:1px solid var(--spine)}
 .strip i{position:absolute;bottom:0;width:2px;transform:translateX(-50%);background:var(--bar)}
-/* stat cells share one template across every card so columns line up to scan */
-.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));
+/* stat cells share one template across every card so columns line up to scan; a
+   track fits the longest cell, such as "1311h 20m agent active" (22 characters) */
+.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(22ch,1fr));
   gap:2px 16px;font-size:11px;color:var(--dim);margin-top:10px}
 .pstats span{white-space:nowrap}
 .pstats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}

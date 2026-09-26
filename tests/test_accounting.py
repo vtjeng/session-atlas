@@ -226,12 +226,13 @@ class AccountingTests(unittest.TestCase):
     def test_panel_tables_share_one_column_grid(self):
         # Every table sets its width to its columns' sum, so fixed layout
         # applies and a category column is the same width in each: a
-        # seven-column matrix is 120 + 6 * 90 = 660px, the six-column rates
-        # table 570px.
+        # seven-column matrix is 120 + 6 * 88 = 648px, the width of the
+        # panel body (the 832px column less the log's 92px gutter on each
+        # side), and the six-column rates table is 560px.
         seven = generate_site._grid_open(["model", "a", "b", "c", "d", "e", "total"])
         six = generate_site._grid_open(["model", "a", "b", "c", "d", "e"])
-        self.assertIn('<table class="grid" style="width:660px">', seven)
-        self.assertIn('<table class="grid" style="width:570px">', six)
+        self.assertIn('<table class="grid" style="width:648px">', seven)
+        self.assertIn('<table class="grid" style="width:560px">', six)
 
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {
