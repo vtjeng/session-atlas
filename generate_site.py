@@ -2987,12 +2987,15 @@ a.proj:hover,a.proj:focus-visible{border-color:var(--machine);outline:none}
 .ppath{font-size:11px;color:var(--faint);margin-top:1px;word-break:break-all}
 .strip{position:relative;height:30px;margin-top:12px;border-bottom:1px solid var(--spine)}
 .strip i{position:absolute;bottom:0;width:2px;transform:translateX(-50%);background:var(--bar)}
-/* stat cells share one template across every card so columns line up to scan; a
-   track fits the longest cell, such as "1311h 20m agent active" (22 characters) */
-.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(22ch,1fr));
+/* stat cells share one template across every card so columns line up to scan. A
+   track of 24ch holds the longest cell, such as "1311h 20m agent active" (22
+   characters), with room to spare, so a desktop card fits four; on a phone the track
+   shrinks to just under half the card, so two cells always share a row */
+.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(24ch,calc(50% - 10px)),1fr));
   gap:2px 16px;font-size:11px;color:var(--dim);margin-top:10px}
-.pstats span{white-space:nowrap}
-.pstats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+/* a value never breaks; on a phone a long label wraps under it instead of running
+   into the next cell */
+.pstats b{white-space:nowrap;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
 @media (max-width:640px){.axislbl .lbl{display:none}}
 """
 
