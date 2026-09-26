@@ -1201,8 +1201,8 @@ def _usage_html(series):
         '<b class="grip l"></b><b class="grip r"></b></div></div>'
         f'<div class="uminiaxis"><span>{esc(_fmt_day(first_o))}</span>'
         f'<span>{esc(_fmt_day(first_o + n - 1))}</span></div>'
-        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag on the chart '
-        'to zoom in, or drag the minimap window to move or resize it.</p>'
+        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag the chart '
+        'to zoom; drag the minimap window to move or resize.</p>'
         f'<script type="application/json" id="usageData">{payload}</script>'
         '</section>')
 
@@ -1265,15 +1265,21 @@ def _group_codex_timelines(timelines):
 
 
 # --------------------------------------------------------------- rendering -- #
+_FONT_FACES = (  # family, style, file in fonts/
+    ("Crimson Pro", "normal", "CrimsonPro-Latin.woff2"),
+    ("Crimson Pro", "italic", "CrimsonPro-Italic-Latin.woff2"),
+    ("JetBrains Mono", "normal", "JetBrainsMono-Latin.woff2"),
+)
+
+
 def _font_face_css():
-    """@font-face rules that inline Crimson Pro, the serif, so a page shows the
-    same face offline and on any machine. scripts/subset_font.py builds the files."""
+    """@font-face rules that inline the serif and the mono, so a page shows the
+    same faces offline and on any machine. scripts/subset_font.py builds the files."""
     rules = []
-    for style, name in (("normal", "CrimsonPro-Latin.woff2"),
-                        ("italic", "CrimsonPro-Italic-Latin.woff2")):
+    for family, style, name in _FONT_FACES:
         data = base64.b64encode(
             (Path(__file__).parent / "fonts" / name).read_bytes()).decode("ascii")
-        rules.append(f'@font-face{{font-family:"Crimson Pro";font-style:{style};'
+        rules.append(f'@font-face{{font-family:"{family}";font-style:{style};'
                      f'font-weight:400 700;src:url(data:font/woff2;base64,{data})}}')
     return "".join(rules)
 
@@ -1293,7 +1299,7 @@ CSS = _font_face_css() + """
   --s1:#468cc6; --s2:#9d7cc9; --s3:#cd7190; --s4:#4fb0a4;
   --s5:#cf83c0; --s6:#6f86d8; --s7:#cf7087; --s8:#57c0d0;
   --claude:#d98a5c; --codex:#57b08a;
-  --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  --mono:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
   --serif:"Crimson Pro","Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
   color-scheme:dark;
 }
@@ -1311,6 +1317,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);
   font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
 a{color:inherit}
 button{font:inherit;color:inherit}
+code{font-family:var(--mono)}
 .wrap{max-width:880px;margin:0 auto;padding:0 24px}
 .lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
 
@@ -1414,7 +1421,7 @@ header.hero{position:relative}
 .help::backdrop{background:color-mix(in srgb,var(--bg) 72%,transparent)}
 .help-box{padding:18px 22px 20px}
 .help-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
-.help h2{font-family:var(--serif);font-size:20px;font-weight:400;margin:0}
+.help h2{font-family:var(--serif);font-size:20px;font-weight:500;margin:0}
 .help-close{appearance:none;-webkit-appearance:none;border:0;background:none;padding:2px 6px;
   border-radius:4px;color:var(--dim);font:inherit;font-size:18px;line-height:1;cursor:pointer}
 .help-close:hover{color:var(--ink)}
@@ -1447,7 +1454,7 @@ header.hero{position:relative}
 
 /* ---- hero ---- */
 header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
-h1{font-family:var(--serif);font-size:38px;font-weight:400;letter-spacing:-.01em;
+h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em;
   margin:12px 0 6px}
 .path{font-size:12px;color:var(--faint);word-break:break-all}
 .range{font-size:12px;color:var(--dim);margin-top:12px}
@@ -1604,6 +1611,8 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 /* an excerpt fills the card, indented under its label */
 .response-text{padding-left:16px;font-family:var(--serif);font-size:14.5px;line-height:1.45;
   color:var(--dim)}
+/* 0.8em brings the mono's x-height (0.55em) near the serif's (0.42em) */
+.response-text code{font-size:.8em}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
 .files{margin-top:10px}

@@ -131,22 +131,27 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertNotIn("<h3>Keyboard</h3>", index)
         self.assertNotIn("<h3>Chart</h3>", index)
 
-    def test_pages_embed_the_serif_they_name(self):
+    def test_pages_embed_the_fonts_they_name(self):
         claude_dir = os.path.join(
             FIXTURES, "claude", "-home-demo-src-example-project")
         timeline = build_timeline(claude_dir)
         for page in (render(timeline), render_index([("example", timeline)])):
-            # One roman and one italic face, each a WOFF2 file inlined as a
-            # data URL, so a page shows Crimson Pro offline and on any machine.
+            # Each face is a WOFF2 file inlined as a data URL, so a page shows
+            # the same serif and mono offline and on any machine: Crimson Pro
+            # in roman and italic, and JetBrains Mono in roman only, since no
+            # mono text is set in italic.
             faces = re.findall(
-                r'@font-face\{font-family:"Crimson Pro";font-style:(\w+);'
+                r'@font-face\{font-family:"([^"]+)";font-style:(\w+);'
                 r'font-weight:400 700;src:url\(data:font/woff2;base64,([A-Za-z0-9+/=]+)\)',
                 page)
-            self.assertEqual([style for style, _ in faces], ["normal", "italic"])
-            for _, data in faces:
+            self.assertEqual([(family, style) for family, style, _ in faces], [
+                ("Crimson Pro", "normal"), ("Crimson Pro", "italic"),
+                ("JetBrains Mono", "normal")])
+            for _, _, data in faces:
                 # "wOF2" is the WOFF2 signature, the first four bytes of the file.
                 self.assertEqual(base64.b64decode(data)[:4], b"wOF2")
             self.assertIn('--serif:"Crimson Pro",', page)
+            self.assertIn('--mono:"JetBrains Mono",', page)
 
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:
