@@ -488,7 +488,7 @@ def _rate(x):
 
 
 _GRID_CLOSE = "</tbody></table></div>"
-_GRID_MODEL_COL, _GRID_COL = 120, 88   # px; a seven-column matrix is 648px, the panel body's width
+_GRID_MODEL_COL, _GRID_COL = 120, 90   # px; a seven-column matrix is 660px wide
 
 
 def _grid_open(headers):
@@ -1281,10 +1281,6 @@ CSS = """
   --claude:#d98a5c; --codex:#57b08a;
   --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
   --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
-  /* reading measures: a prose line stops at about 70 characters of the serif (62ch;
-     its average letter is narrower than its zero) or 80 of the mono, however wide
-     the box around it */
-  --measure:62ch; --measure-mono:80ch;
   color-scheme:dark;
 }
 @media (prefers-color-scheme:light){
@@ -1543,7 +1539,8 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
 .clock{position:absolute;left:0;top:3px;width:52px;text-align:right;
   font-size:11px;color:var(--faint);text-decoration:none}
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
-.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:var(--measure);
+/* a prompt runs to the lane's right edge, as wide as the card below it */
+.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;
   white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal{font-family:var(--mono);font-size:13px;line-height:1.45;max-width:100%;
   white-space:nowrap;overflow-x:auto;color:var(--dim)}
@@ -1589,9 +1586,10 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 .response-item+.response-item{margin-top:9px}
 .response-meta{margin-bottom:3px;font-size:11px;
   letter-spacing:.02em;color:var(--faint)}
-.response-text{max-width:var(--measure);font-family:var(--serif);font-size:13px;line-height:1.45;
+/* an excerpt fills the card, indented under its label */
+.response-text{padding-left:16px;font-family:var(--serif);font-size:13px;line-height:1.45;
   color:var(--dim)}
-.gist{max-width:var(--measure-mono);margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
+.gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
 .files{margin-top:10px}
 .files .detail-heading{margin-bottom:5px}
@@ -1614,12 +1612,10 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing[open]>summary{color:var(--ink)}
 .pricing>summary:hover{color:var(--ink)}
 .pricing>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-/* the body is one block as wide as its tables, centered in the column. That width is
-   the 832px column less the log's 92px gutter on each side, so at full width the
-   body lines up with the timeline's entries. Its prose keeps to the reading measure. */
-.pricing-body{max-width:648px;margin:14px auto 0;text-align:left;color:var(--dim);
+/* the body sits 30px in from its heading and is as wide as its tables, so the prose
+   and the tables end at one right edge */
+.pricing-body{max-width:660px;margin:14px 0 0 30px;text-align:left;color:var(--dim);
   font-size:12px;line-height:1.55}
-.pricing-body>p,.pricing-body>ul{max-width:var(--measure-mono)}
 .pricing-body p{margin:0 0 9px}
 .pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
 .pricing-body li{padding-left:2px}
@@ -1635,7 +1631,7 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
    sits at the same x in each; each table's width is set inline to its columns'
    sum, which is what lets fixed layout apply (the rate table has no total column) */
 .pricing table.grid{table-layout:fixed}
-.pricing table.grid col{width:88px}
+.pricing table.grid col{width:90px}
 .pricing table.grid col.cm{width:120px}
 .pricing td.mdl{color:var(--machine)}
 .pricing td.mdl.fam-claude{color:var(--claude)}
@@ -1740,7 +1736,7 @@ select.uwin:focus-visible{outline:2px solid var(--machine);outline-offset:-1px}
 .brush .grip.r{right:-4px}
 .uminiaxis{display:flex;justify-content:space-between;margin:4px 0 0 var(--ugut);
   font-size:10px;line-height:16px;color:var(--faint)}
-.uhelp{max-width:var(--measure-mono);margin:8px 0 0;font-size:11px;line-height:16px;color:var(--faint)}
+.uhelp{margin:8px 0 0;font-size:11px;line-height:16px;color:var(--faint)}
 
 @media (max-width:640px){
   /* the readout's lines get two lines each, at a fixed height so the frame stays
