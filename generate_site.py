@@ -11,6 +11,7 @@ right-hand minimap tracks document position. The generator renders timestamps
 in the local timezone and writes each page as one dependency-free HTML file.
 """
 import argparse
+import base64
 import contextlib
 import fcntl
 import functools
@@ -1200,8 +1201,8 @@ def _usage_html(series):
         '<b class="grip l"></b><b class="grip r"></b></div></div>'
         f'<div class="uminiaxis"><span>{esc(_fmt_day(first_o))}</span>'
         f'<span>{esc(_fmt_day(first_o + n - 1))}</span></div>'
-        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag on the chart '
-        'to zoom in, or drag the minimap window to move or resize it.</p>'
+        '<p class="uhelp">Hover a bar to inspect it, click to pin it. Drag the chart '
+        'to zoom; drag the minimap window to move or resize.</p>'
         f'<script type="application/json" id="usageData">{payload}</script>'
         '</section>')
 
@@ -1264,13 +1265,32 @@ def _group_codex_timelines(timelines):
 
 
 # --------------------------------------------------------------- rendering -- #
+_FONT_FACES = (  # family, style, file in fonts/
+    ("Crimson Pro", "normal", "CrimsonPro-Latin.woff2"),
+    ("Crimson Pro", "italic", "CrimsonPro-Italic-Latin.woff2"),
+    ("JetBrains Mono", "normal", "JetBrainsMono-Latin.woff2"),
+)
+
+
+def _font_face_css():
+    """@font-face rules that inline the serif and the mono, so a page shows the
+    same faces offline and on any machine. scripts/subset_font.py builds the files."""
+    rules = []
+    for family, style, name in _FONT_FACES:
+        data = base64.b64encode(
+            (Path(__file__).parent / "fonts" / name).read_bytes()).decode("ascii")
+        rules.append(f'@font-face{{font-family:"{family}";font-style:{style};'
+                     f'font-weight:400 700;src:url(data:font/woff2;base64,{data})}}')
+    return "".join(rules)
+
+
 # Design language: two voices on a time spine. Everything the human typed is
 # serif with a session-colored square marker; machine activity is mono inside
 # recessed readout panels, with steel-colored accents. Colors run on three axes
 # kept distinct: vendor (--claude orange / --codex green, semantic & reserved),
 # session identity (--s1..s8, an 8-hue cycle avoiding the vendor hues), and
 # voice (--human amber / --machine steel). Bars validated for CVD + contrast.
-CSS = """
+CSS = _font_face_css() + """
 :root{
   --bg:#15171b; --panel:#1b1e25; --panel2:#232730; --line:#2a2f39; --spine:#333a46;
   --ink:#e9e6df; --dim:#9aa1ac; --faint:#868e9a;
@@ -1279,8 +1299,8 @@ CSS = """
   --s1:#468cc6; --s2:#9d7cc9; --s3:#cd7190; --s4:#4fb0a4;
   --s5:#cf83c0; --s6:#6f86d8; --s7:#cf7087; --s8:#57c0d0;
   --claude:#d98a5c; --codex:#57b08a;
-  --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
-  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  --serif:"Crimson Pro","Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
   color-scheme:dark;
 }
 @media (prefers-color-scheme:light){
@@ -1297,6 +1317,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);
   font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased}
 a{color:inherit}
 button{font:inherit;color:inherit}
+code{font-family:var(--mono)}
 .wrap{max-width:880px;margin:0 auto;padding:0 24px}
 .lbl{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
 
@@ -1320,8 +1341,9 @@ button{font:inherit;color:inherit}
 .crumb-name:hover,.crumb-desc:hover{text-decoration:underline}
 .crumb-name:focus-visible,.crumb-desc:focus-visible{outline:2px solid var(--machine);
   outline-offset:2px;border-radius:2px}
-.crumb-name{font-family:var(--serif);font-size:15px;color:var(--ink);white-space:nowrap;
-  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* a fixed 22.5px line height, so the larger serif does not make the sticky bar taller */
+.crumb-name{font-family:var(--serif);font-size:16.5px;line-height:22.5px;color:var(--ink);
+  white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* current session's title — secondary, so it grows into any spare room (flex-basis
    0, grow 1) and is the first thing to ellipsize as the bar narrows; the name only
    starts truncating once the description is gone */
@@ -1370,6 +1392,9 @@ button{font:inherit;color:inherit}
   border-top:1.5px solid var(--ink);border-bottom:1.5px solid var(--ink)}
 body{padding-right:0}
 body.has-right-rail{padding-right:56px}
+/* the padding keeps the column clear of the rail; where there is room, shift the
+   column back right by half of it, so it sits where the index page's column does */
+body.has-right-rail .wrap{position:relative;left:clamp(0px,calc((100% - 880px) / 2),28px)}
 @media (max-width:759px){.minimap{display:none}body.has-right-rail{padding-right:0}}
 .sessnav{display:flex;align-items:center;gap:8px;flex:0 0 auto;
   letter-spacing:.1em;text-transform:uppercase}
@@ -1536,7 +1561,8 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
 .clock{position:absolute;left:0;top:3px;width:52px;text-align:right;
   font-size:11px;color:var(--faint);text-decoration:none}
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
-.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;max-width:62ch;
+/* a prompt runs to the lane's right edge, as wide as the card below it */
+.ask{font-family:var(--serif);font-size:18px;line-height:1.55;
   white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal{font-family:var(--mono);font-size:13px;line-height:1.45;max-width:100%;
   white-space:nowrap;overflow-x:auto;color:var(--dim)}
@@ -1544,7 +1570,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .terminal .term-sep{padding:0 8px;color:var(--faint)}
 .terminal .term-out{color:var(--dim)}
 .terminal .term-err{color:var(--human)}
-.ask.clip{max-height:148px;overflow:hidden;cursor:pointer;
+.ask.clip{max-height:5.8lh;overflow:hidden;cursor:pointer;
   -webkit-mask-image:linear-gradient(#000 64%,transparent);
   mask-image:linear-gradient(#000 64%,transparent)}
 .ask .cmdname{font-family:var(--mono);font-size:13px;color:var(--human);
@@ -1556,7 +1582,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
   border-radius:50%}
 
 /* machine readout */
-.ro{margin-top:12px;max-width:660px;background:var(--panel);border:1px solid var(--line);
+.ro{margin-top:12px;background:var(--panel);border:1px solid var(--line);
   border-radius:8px;padding:10px 14px 11px;font-size:12px;color:var(--dim)}
 .rostat{display:flex;flex-wrap:wrap;gap:4px 16px}
 .rostat b{color:var(--ink);font-weight:600}
@@ -1582,7 +1608,11 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 .response-item+.response-item{margin-top:9px}
 .response-meta{margin-bottom:3px;font-size:11px;
   letter-spacing:.02em;color:var(--faint)}
-.response-text{font-family:var(--serif);font-size:13px;line-height:1.45;color:var(--dim)}
+/* an excerpt fills the card, indented under its label */
+.response-text{padding-left:16px;font-family:var(--serif);font-size:14.5px;line-height:1.45;
+  color:var(--dim)}
+/* 0.8em brings the mono's x-height (0.55em) near the serif's (0.42em) */
+.response-text code{font-size:.8em}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}
 .files{margin-top:10px}
@@ -1606,9 +1636,10 @@ footer{border-top:1px solid var(--line);margin-top:20px;padding:22px 0 70px;
 .pricing[open]>summary{color:var(--ink)}
 .pricing>summary:hover{color:var(--ink)}
 .pricing>summary:focus-visible{outline:2px solid var(--machine);outline-offset:2px}
-/* the prose takes the column's width like the lines above it; the tables below
-   keep their own widths */
-.pricing-body{margin:14px 0 0;text-align:left;color:var(--dim);font-size:12px;line-height:1.55}
+/* the body sits 30px in from its heading and is as wide as its tables, so the prose
+   and the tables end at one right edge */
+.pricing-body{max-width:660px;margin:14px 0 0 30px;text-align:left;color:var(--dim);
+  font-size:12px;line-height:1.55}
 .pricing-body p{margin:0 0 9px}
 .pricing-body ul.category-help{margin:0 0 9px;padding-left:18px}
 .pricing-body li{padding-left:2px}
@@ -2943,8 +2974,9 @@ def short_path(p, tl):
 # The index shares the project-page CSS wholesale (same tokens, hero, footer);
 # these rules only add the project shelf. Unused log selectors cost nothing.
 INDEX_CSS = """
+/* inset by a card's border and padding, so the dates sit over the strips' ends */
 .axislbl{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);
-  margin:30px 0 8px}
+  margin:30px 0 8px;padding:0 21px}
 .shelf{display:grid;gap:14px;padding-bottom:10px}
 a.proj{display:block;padding:16px 20px 14px;border:1px solid var(--line);border-radius:8px;
   background:var(--panel);text-decoration:none;transition:border-color .12s}
@@ -2955,11 +2987,15 @@ a.proj:hover,a.proj:focus-visible{border-color:var(--machine);outline:none}
 .ppath{font-size:11px;color:var(--faint);margin-top:1px;word-break:break-all}
 .strip{position:relative;height:30px;margin-top:12px;border-bottom:1px solid var(--spine)}
 .strip i{position:absolute;bottom:0;width:2px;transform:translateX(-50%);background:var(--bar)}
-/* stat cells share one template across every card so columns line up to scan */
-.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));
+/* stat cells share one template across every card so columns line up to scan. A
+   track of 24ch holds the longest cell, such as "1311h 20m agent active" (22
+   characters), with room to spare, so a desktop card fits four; on a phone the track
+   shrinks to just under half the card, so two cells always share a row */
+.pstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(24ch,calc(50% - 10px)),1fr));
   gap:2px 16px;font-size:11px;color:var(--dim);margin-top:10px}
-.pstats span{white-space:nowrap}
-.pstats b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+/* a value never breaks; on a phone a long label wraps under it instead of running
+   into the next cell */
+.pstats b{white-space:nowrap;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
 @media (max-width:640px){.axislbl .lbl{display:none}}
 """
 
