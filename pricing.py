@@ -10,21 +10,23 @@ Each entry is ``(input, output, cache_read, cache_write, cache_write_1h)``
 per 1M tokens:
   input        uncached prompt tokens, full rate
   output       generated tokens
-  cache_read   tokens served from cache (cheaper): Anthropic 0.1x input,
-               OpenAI its published cached-input rate
+  cache_read   tokens served from cache (cheaper): Anthropic 0.1x input
+               (0.025x on Fable 5.1, 0.05x on Opus 5.5), OpenAI its published
+               cached-input rate
   cache_write  standard writes: Anthropic 5-minute TTL and OpenAI's 30-minute
                TTL are 1.25x input.
   cache_write_1h  Anthropic's extended one-hour TTL, at 2x input. ``None`` where
                the vendor doesn't bill this category, so it's never priced.
 """
 
-AS_OF = "2026-09-04"
+AS_OF = "2026-09-25"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
 PRICES = {
     "claude-fable-5-1":(10.00, 50.00, 0.250, 12.50, 20.00),
     "claude-fable-5":  (10.00, 50.00, 1.000, 12.50, 20.00),
+    "claude-opus-5-5": ( 4.00, 20.00, 0.200,  5.00,  8.00),
     "claude-opus-5":   ( 5.00, 25.00, 0.500,  6.25, 10.00),
     "claude-opus-4-8": ( 5.00, 25.00, 0.500,  6.25, 10.00),
     "claude-opus-4-6": ( 5.00, 25.00, 0.500,  6.25, 10.00),
@@ -33,6 +35,8 @@ PRICES = {
     "claude-haiku-4-5-20251001":
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
     "gpt-6-astra":     (10.00, 50.00, 1.000, 12.50, None),
+    "gpt-6-sol":       ( 2.00, 10.00, 0.200,  2.50, None),
+    "gpt-6-luna":      ( 0.10,  0.50, 0.010,  0.125, None),
     "gpt-5.6":         ( 4.00, 20.00, 0.400,  5.00, None),
     "gpt-5.6-sol":     ( 4.00, 20.00, 0.400,  5.00, None),
     "gpt-5.6-terra":   ( 2.00, 12.00, 0.200,  2.50, None),

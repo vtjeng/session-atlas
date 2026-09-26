@@ -196,6 +196,30 @@ class AccountingTests(unittest.TestCase):
         self.assertIn('Estimated cost by model (test):', card)
         self.assertIn('<ul class="category-help"><li><b>input:</b>', card)
 
+    def test_models_added_2026_09_25_price_at_their_published_rates(self):
+        # One million tokens in each category turns each cost into the rate
+        # itself, so the expected values are the published per-1M prices.
+        tokens = {key: 1_000_000 for key, _ in pricing.CATEGORIES}
+        expected = {
+            # Opus 5.5: $4 input, $20 output, cache reads at 0.05x input
+            # ($0.20, not the usual 0.1x), 1.25x and 2x input cache writes.
+            "claude-opus-5-5": {"in": 4.0, "out": 20.0, "cr": 0.20,
+                                "cc": 5.0, "cc1h": 8.0},
+            # gpt-6-sol and gpt-6-luna: OpenAI's published input, output,
+            # cached-input, and cache-write prices; no one-hour category.
+            "gpt-6-sol": {"in": 2.0, "out": 10.0, "cr": 0.20,
+                          "cc": 2.5, "cc1h": 0.0},
+            "gpt-6-luna": {"in": 0.10, "out": 0.50, "cr": 0.01,
+                           "cc": 0.125, "cc1h": 0.0},
+        }
+        for model, costs in expected.items():
+            with self.subTest(model=model):
+                cats, total, unpriced = pricing.cost_breakdown({model: tokens})
+                self.assertFalse(unpriced)
+                for key, cost in costs.items():
+                    self.assertAlmostEqual(cats[key]["cost"], cost)
+                self.assertAlmostEqual(total, sum(costs.values()))
+
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)
         self.assertEqual(len(pricing.CATEGORIES), 5)
