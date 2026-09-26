@@ -11,6 +11,7 @@ right-hand minimap tracks document position. The generator renders timestamps
 in the local timezone and writes each page as one dependency-free HTML file.
 """
 import argparse
+import base64
 import contextlib
 import fcntl
 import functools
@@ -1264,13 +1265,26 @@ def _group_codex_timelines(timelines):
 
 
 # --------------------------------------------------------------- rendering -- #
+def _font_face_css():
+    """@font-face rules that inline Crimson Pro, the serif, so a page shows the
+    same face offline and on any machine. scripts/subset_font.py builds the files."""
+    rules = []
+    for style, name in (("normal", "CrimsonPro-Latin.woff2"),
+                        ("italic", "CrimsonPro-Italic-Latin.woff2")):
+        data = base64.b64encode(
+            (Path(__file__).parent / "fonts" / name).read_bytes()).decode("ascii")
+        rules.append(f'@font-face{{font-family:"Crimson Pro";font-style:{style};'
+                     f'font-weight:400 700;src:url(data:font/woff2;base64,{data})}}')
+    return "".join(rules)
+
+
 # Design language: two voices on a time spine. Everything the human typed is
 # serif with a session-colored square marker; machine activity is mono inside
 # recessed readout panels, with steel-colored accents. Colors run on three axes
 # kept distinct: vendor (--claude orange / --codex green, semantic & reserved),
 # session identity (--s1..s8, an 8-hue cycle avoiding the vendor hues), and
 # voice (--human amber / --machine steel). Bars validated for CVD + contrast.
-CSS = """
+CSS = _font_face_css() + """
 :root{
   --bg:#15171b; --panel:#1b1e25; --panel2:#232730; --line:#2a2f39; --spine:#333a46;
   --ink:#e9e6df; --dim:#9aa1ac; --faint:#868e9a;
@@ -1280,7 +1294,7 @@ CSS = """
   --s5:#cf83c0; --s6:#6f86d8; --s7:#cf7087; --s8:#57c0d0;
   --claude:#d98a5c; --codex:#57b08a;
   --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
-  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+  --serif:"Crimson Pro","Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
   color-scheme:dark;
 }
 @media (prefers-color-scheme:light){
@@ -1320,8 +1334,9 @@ button{font:inherit;color:inherit}
 .crumb-name:hover,.crumb-desc:hover{text-decoration:underline}
 .crumb-name:focus-visible,.crumb-desc:focus-visible{outline:2px solid var(--machine);
   outline-offset:2px;border-radius:2px}
-.crumb-name{font-family:var(--serif);font-size:15px;color:var(--ink);white-space:nowrap;
-  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* a fixed 22.5px line height, so the larger serif does not make the sticky bar taller */
+.crumb-name{font-family:var(--serif);font-size:16.5px;line-height:22.5px;color:var(--ink);
+  white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 /* current session's title — secondary, so it grows into any spare room (flex-basis
    0, grow 1) and is the first thing to ellipsize as the bar narrows; the name only
    starts truncating once the description is gone */
@@ -1399,7 +1414,7 @@ header.hero{position:relative}
 .help::backdrop{background:color-mix(in srgb,var(--bg) 72%,transparent)}
 .help-box{padding:18px 22px 20px}
 .help-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
-.help h2{font-family:var(--serif);font-size:20px;font-weight:500;margin:0}
+.help h2{font-family:var(--serif);font-size:20px;font-weight:400;margin:0}
 .help-close{appearance:none;-webkit-appearance:none;border:0;background:none;padding:2px 6px;
   border-radius:4px;color:var(--dim);font:inherit;font-size:18px;line-height:1;cursor:pointer}
 .help-close:hover{color:var(--ink)}
@@ -1432,7 +1447,7 @@ header.hero{position:relative}
 
 /* ---- hero ---- */
 header.hero{padding:16px 0 30px;border-bottom:1px solid var(--line)}
-h1{font-family:var(--serif);font-size:38px;font-weight:500;letter-spacing:-.01em;
+h1{font-family:var(--serif);font-size:38px;font-weight:400;letter-spacing:-.01em;
   margin:12px 0 6px}
 .path{font-size:12px;color:var(--faint);word-break:break-all}
 .range{font-size:12px;color:var(--dim);margin-top:12px}
@@ -1540,7 +1555,7 @@ summary.sess .share{vertical-align:middle;margin:-4px 0 -4px 2px}
   font-size:11px;color:var(--faint);text-decoration:none}
 a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 /* a prompt runs to the lane's right edge, as wide as the card below it */
-.ask{font-family:var(--serif);font-size:16.5px;line-height:1.55;
+.ask{font-family:var(--serif);font-size:18px;line-height:1.55;
   white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal{font-family:var(--mono);font-size:13px;line-height:1.45;max-width:100%;
   white-space:nowrap;overflow-x:auto;color:var(--dim)}
@@ -1548,7 +1563,7 @@ a.clock:hover,a.clock:focus-visible{color:var(--human);outline:none}
 .terminal .term-sep{padding:0 8px;color:var(--faint)}
 .terminal .term-out{color:var(--dim)}
 .terminal .term-err{color:var(--human)}
-.ask.clip{max-height:148px;overflow:hidden;cursor:pointer;
+.ask.clip{max-height:5.8lh;overflow:hidden;cursor:pointer;
   -webkit-mask-image:linear-gradient(#000 64%,transparent);
   mask-image:linear-gradient(#000 64%,transparent)}
 .ask .cmdname{font-family:var(--mono);font-size:13px;color:var(--human);
@@ -1587,7 +1602,7 @@ details.more>summary:focus-visible{outline:2px solid var(--machine);outline-offs
 .response-meta{margin-bottom:3px;font-size:11px;
   letter-spacing:.02em;color:var(--faint)}
 /* an excerpt fills the card, indented under its label */
-.response-text{padding-left:16px;font-family:var(--serif);font-size:13px;line-height:1.45;
+.response-text{padding-left:16px;font-family:var(--serif);font-size:14.5px;line-height:1.45;
   color:var(--dim)}
 .gist{margin:10px 0;padding-left:12px;border-left:2px solid var(--bar);
   font-size:12px;color:var(--dim);white-space:pre-wrap}

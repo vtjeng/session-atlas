@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 import os
@@ -129,6 +130,23 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertIn('<dialog class="help" id="help"', index)
         self.assertNotIn("<h3>Keyboard</h3>", index)
         self.assertNotIn("<h3>Chart</h3>", index)
+
+    def test_pages_embed_the_serif_they_name(self):
+        claude_dir = os.path.join(
+            FIXTURES, "claude", "-home-demo-src-example-project")
+        timeline = build_timeline(claude_dir)
+        for page in (render(timeline), render_index([("example", timeline)])):
+            # One roman and one italic face, each a WOFF2 file inlined as a
+            # data URL, so a page shows Crimson Pro offline and on any machine.
+            faces = re.findall(
+                r'@font-face\{font-family:"Crimson Pro";font-style:(\w+);'
+                r'font-weight:400 700;src:url\(data:font/woff2;base64,([A-Za-z0-9+/=]+)\)',
+                page)
+            self.assertEqual([style for style, _ in faces], ["normal", "italic"])
+            for _, data in faces:
+                # "wOF2" is the WOFF2 signature, the first four bytes of the file.
+                self.assertEqual(base64.b64decode(data)[:4], b"wOF2")
+            self.assertIn('--serif:"Crimson Pro",', page)
 
     def test_screenshot_site_is_built_only_from_synthetic_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp:

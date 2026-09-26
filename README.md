@@ -52,7 +52,8 @@ python3 generate_site.py "$HOME/src/example-project"
 
 The command writes the page under `site/` using a stable path-derived slug and
 prints its exact `file://` URL. Open that URL in a browser. The page contains its
-styles and scripts, so it works without a web server or network connection.
+styles, scripts, and typeface, so it works without a web server or network
+connection.
 
 > [!NOTE]
 > **Project lookup:** The site generator combines Claude Code and Codex CLI
@@ -551,9 +552,13 @@ The main files have these roles:
 | `pricing.py` | Applies the model rates in `estimate_cost()`. |
 | `scripts/capture-readme-screenshots.sh` | Runs the supported synthetic-fixture screenshot workflow. |
 | `scripts/profile-page.js` | Profiles a generated page's browser load and DOM costs. |
+| `fonts/` | Holds the Crimson Pro files that every page embeds as its serif. |
+| `scripts/subset_font.py` | Rebuilds the files in `fonts/` from the Google Fonts release. |
 | `tests/fixtures/transcripts/` | Holds invented Claude Code and Codex CLI records for parser and screenshot tests. |
 | `docs/transcript-formats.md` | Documents transcript fields and parser mappings for future parser changes. |
 
 ## License
 
-session-atlas is available under the [MIT License](LICENSE).
+session-atlas is available under the [MIT License](LICENSE). The embedded
+Crimson Pro typeface is available under the SIL Open Font License; see
+[fonts/OFL.txt](fonts/OFL.txt).
