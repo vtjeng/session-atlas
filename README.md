@@ -96,7 +96,7 @@ read an existing `site/` or transcripts from a developer's home directory.
 | Goal | Go to |
 | --- | --- |
 | See how the index and project pages are organized | [What the atlas shows](#what-the-atlas-shows) |
-| Automate refreshes, archive transcripts, or inspect parser output | [Advanced tasks](#advanced-tasks) |
+| Automate refreshes, keep deleted sessions, or inspect parser output | [Advanced tasks](#advanced-tasks) |
 | Understand classification, timelines, and accounting | [Reference](#reference) |
 | Run tests or refresh documentation images | [Development](#development) |
 
@@ -210,10 +210,7 @@ python3 generate_site.py --all \
 Replace `<you>` with your Windows user name. From each home, the generator
 reads the rollouts in `sessions` and `archived_sessions` and the prompts
 recovered from `history.jsonl` and `logs_2.sqlite`. It parses the largest copy
-of a rollout that appears in more than one home or in the archive.
-`archive_transcripts.py` accepts the same option and copies the rollouts from
-every home into `archive/codex/YYYY/MM/DD/`, taking the date from each file
-name.
+of a rollout that appears in more than one home.
 
 ### Refresh automatically with systemd
 
@@ -245,9 +242,8 @@ systemctl --user status session-atlas-render.service
 Generated project and index pages show their refresh time in the header and
 footer.
 
-The supplied timer renders only. Automatic archiving is a separate opt-in
-because archived copies can outlive source cleanup. Configure an archive job
-using the destination and privacy procedure below.
+Each timer render also updates the archive described in
+[Keep sessions after their transcripts are deleted](#keep-sessions-after-their-transcripts-are-deleted).
 
 ### Reuse parsed transcripts between renders
 
@@ -270,49 +266,34 @@ many were parsed (misses). A full build removes entries whose transcripts no
 longer exist. The cache is owner-only and holds the same private data as the
 pages; delete the directory to force a full parse.
 
-### Archive transcripts
+### Keep sessions after their transcripts are deleted
 
-Use `archive_transcripts.py` to preserve Claude Code session files and Codex CLI
-rollout files when source files might be cleaned up or a tool reinstalled:
+Claude Code deletes transcripts older than its `cleanupPeriodDays` setting, 30
+days by default, and Codex or a reinstall can remove rollouts too. To keep
+those sessions in the atlas, every `generate_site.py --all` render saves what
+it parsed from each session under `archive/`, and a later render uses the saved
+copy when the transcript is gone:
 
-```bash
-python3 archive_transcripts.py
-```
+- `archive/codex/<rollout name>.json` holds one Codex rollout's parse.
+- `archive/claude/<project directory>/<session id>.json` holds one Claude Code
+  session and its timeline entries.
 
-By default, `archive_transcripts.py` writes a retention archive under
-`archive/`. It copies new or larger source files atomically, never deletes an
-archived session, and never replaces a fuller archived copy with a smaller
-source. Archive directories use owner-only mode `0700`, and files use `0600`.
-This is not a redaction workflow, and the command provides no automated
-replacement or deletion operation. To remove sensitive data, stop scheduled
-archiving, remove or redact the live source, then deliberately remove every
-archive and backup copy before resuming.
+A render rewrites a session's file only when it parsed that session again, so
+a render with no new activity writes nothing, and it never deletes a file. A
+live transcript always takes precedence over its saved copy. A saved copy keeps
+the parse from the last render that saw its transcript, so later parser changes
+do not reach sessions whose transcripts are gone.
 
-A local mirror does not protect against disk or machine loss. Write the archive
-to storage that is backed up or mounted from another device when you need that
-protection:
+The archive holds the parsed data that the pages show, not the transcripts. On
+the author's machine, about 25 GB of transcripts give an archive of about 90 MB.
+It does not keep prompts recovered from a Codex home's `history.jsonl` and
+`logs_2.sqlite`, and a single-project render neither reads nor writes it. To
+keep the archive elsewhere, such as on backed-up storage, pass `--archive DIR`
+and add the same option to `ExecStart` in `session-atlas-render.service`.
 
-```bash
-python3 archive_transcripts.py --dest /mnt/backup/session-atlas
-```
-
-Replace `/mnt/backup/session-atlas` with a path on backed-up or separately
-mounted storage. Pass the same path when rendering:
-
-```bash
-python3 generate_site.py --all --archive /mnt/backup/session-atlas
-```
-
-For timer-driven renders, add the same `--archive` value to `ExecStart` in
-`session-atlas-render.service` and run `systemctl --user daemon-reload`.
-Otherwise, the service continues to use `generate_site.py`'s CLI default.
-
-`generate_site.py --all` reads the union of live transcripts and the selected
-archive root, then deduplicates sessions. The archive can contain private data.
-
-The archiver does not copy `~/.codex/history.jsonl` or
-`~/.codex/logs_2.sqlite`, so it does not preserve prompts recovered from those
-history sources. Back up those files separately if you need them.
+The archive holds the same private data as the pages, in owner-only files
+(`0600`) and directories (`0700`). To remove a session for good, delete both
+its transcript and its archive file.
 
 ### Inspect Claude Code statistics
 
@@ -573,7 +554,6 @@ The main files have these roles:
 | `generate_site.py` | Generates project pages and the all-project index. |
 | `ccx_parse.py` | `build_timeline()` resolves Claude Code projects and builds their timelines. |
 | `codex_parse.py` | `build_codex_timelines()` builds timelines from Codex CLI rollout files. |
-| `archive_transcripts.py` | Implements transcript archiving and its retention policy. |
 | `pricing.py` | Applies the model rates in `estimate_cost()`. |
 | `scripts/capture-readme-screenshots.sh` | Runs the supported synthetic-fixture screenshot workflow. |
 | `scripts/profile-page.js` | Profiles a generated page's browser load and DOM costs. |

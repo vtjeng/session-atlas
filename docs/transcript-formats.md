@@ -153,20 +153,32 @@ name, into `~/.codex/archived_sessions/`, which has no date subdirectories.
 
 ## Live and archived inputs
 
-The archive mirrors these source layouts:
+An `--all` render reads Claude Code transcripts from `~/.claude/projects/` and
+Codex rollouts from the `sessions` and `archived_sessions` directories of each
+Codex home (`~/.codex` unless `--codex-home` names others). When a rollout
+appears in more than one home, it parses only the largest copy.
 
-- `archive/claude/<munged-project-dir>/<session>.jsonl`
-- `archive/claude/<munged-project-dir>/<session>/subagents/**/*.jsonl`
-- `archive/codex/YYYY/MM/DD/rollout-*.jsonl`
+`SessionArchive` in `generate_site.py` saves each parsed session as JSON with
+`"format": 1`:
 
-Before parsing, an `--all` render builds live/archive manifests. For each
-Claude parent or nested-subagent relative path, and for each Codex rollout
-basename, it parses only the largest available copy. Codex copies come from
-the `sessions` and `archived_sessions` directories of each Codex home
-(`~/.codex` unless `--codex-home` names others), and from the archive. After parsing, `_merge_timelines`
-deduplicates Claude sessions by session ID, preferring more milestones and then
-later `last_ts`. See [Archive transcripts](../README.md#archive-transcripts) for
-commands, retention, privacy, and recovery.
+- `codex/<rollout name>.json`: `cwd`, `session`, `milestones`, `branches`, and
+  `diagnostics`, the five values `_parse_rollout` returns. Archived rollouts
+  join live ones in `build_codex_timelines`, which orders sessions by rollout
+  name.
+- `claude/<project directory>/<session id>.json`: `project_path`, `session`,
+  and that session's `milestones` from `build_timeline`, for projects that
+  render. The project directory is part of the name because one session's
+  transcript can sit in two project directories, such as a checkout's and a
+  worktree's. Each entry becomes a one-session timeline, and `_merge_timelines`
+  orders it among the project's other sessions.
+
+A render reads an entry only when its transcript is gone: a Codex entry when no
+live rollout has its name, and a Claude entry when its project directory has
+no live transcript with its session ID. When an entry's shape changes, change
+`FORMAT` and convert the existing entries, because entries whose transcripts
+are gone cannot be parsed again. See
+[Keep sessions after their transcripts are deleted](../README.md#keep-sessions-after-their-transcripts-are-deleted)
+for retention and privacy.
 
 ## Verify after parser changes
 
