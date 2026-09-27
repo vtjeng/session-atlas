@@ -6,6 +6,7 @@
 ``docs/transcript-formats.md#shared-timeline-shape-the-contract`` for the output
 schema and source-record mappings.
 """
+import argparse
 import glob
 import json
 import os
@@ -18,9 +19,14 @@ from ccx_parse import (_add_response, _add_tokens, _finalize_milestone,
                        _first_line, _new_activity, _new_milestone,
                        _parse_diagnostic, _timeline_dict, parse_iso)
 
-CODEX_SESSIONS = os.path.expanduser("~/.codex/sessions")
-CODEX_HISTORY = os.path.expanduser("~/.codex/history.jsonl")
-CODEX_LOGS = os.path.expanduser("~/.codex/logs_2.sqlite")
+CODEX_HOME = os.path.expanduser("~/.codex")
+CODEX_SESSIONS = os.path.join(CODEX_HOME, "sessions")
+CODEX_HOME_HELP = (
+    "read the Codex home DIR (default ~/.codex): the rollouts in its sessions "
+    "and archived_sessions directories, and the prompts recovered from its "
+    "history.jsonl and logs_2.sqlite. Repeat for more homes, and list ~/.codex "
+    "to keep it. For the Codex Windows app, give its home as WSL sees it: "
+    "/mnt/c/Users/<you>/.codex")
 
 # Function-call outputs and reasoning payloads are unused here; inspect their
 # discriminator before json.loads to avoid decoding them.
@@ -33,6 +39,11 @@ _TOOL_NAMES = {"exec_command": "Shell", "exec": "Shell", "write_stdin": "Stdin",
                "view_image": "ViewImage", "request_user_input": "AskUser"}
 
 _PATCH_PREFIXES = ("*** Update File: ", "*** Add File: ", "*** Delete File: ")
+
+# Python sizes a file's read buffer from the block size the file system
+# reports. A Windows drive mounted in WSL reports 512 bytes, and reading a
+# rollout there with that buffer is about 70 times slower than with this one.
+_READ_BUFFER = 1 << 20
 
 
 def _response_user_text(payload):
@@ -120,10 +131,45 @@ def rollout_paths(root=CODEX_SESSIONS):
     return sorted(glob.glob(os.path.join(root, "*", "*", "*", "rollout-*.jsonl")))
 
 
-def iter_rollout_metas(root=CODEX_SESSIONS):
+def codex_home_rollouts(homes):
+    """All rollout files in each Codex home: live ones under
+    sessions/YYYY/MM/DD/, and archived ones, which Codex moves into
+    archived_sessions/ with no date subdirectories."""
+    paths = []
+    for home in homes:
+        paths += rollout_paths(os.path.join(home, "sessions"))
+        paths += sorted(glob.glob(
+            os.path.join(home, "archived_sessions", "rollout-*.jsonl")))
+    return paths
+
+
+def codex_home_dir(value):
+    """argparse type for ``--codex-home``: a directory that holds sessions or
+    archived_sessions."""
+    if not any(os.path.isdir(os.path.join(value, sub))
+               for sub in ("sessions", "archived_sessions")):
+        raise argparse.ArgumentTypeError(
+            f"no sessions or archived_sessions directory in {value}")
+    return value
+
+
+def select_rollouts(paths):
+    """Return one path per rollout file name in ``paths``, the largest copy.
+
+    Rollouts are append-only, so the largest copy is the fullest."""
+    chosen = {}
+    for path in paths:
+        name = os.path.basename(path)
+        size = os.path.getsize(path)
+        if name not in chosen or size > chosen[name][0]:
+            chosen[name] = (size, path)
+    return sorted(path for _, path in chosen.values())
+
+
+def iter_rollout_metas(paths):
     """Yield (path, session_meta payload) reading only each file's first line —
     cheap project discovery without parsing full rollouts."""
-    for path in rollout_paths(root):
+    for path in paths:
         try:
             with open(path, "rb") as fh:
                 raw_line = fh.readline()
@@ -172,8 +218,7 @@ def _history_ts(timestamp):
         return None
 
 
-def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
-                                 logs_path=CODEX_LOGS):
+def build_history_only_timelines(known_session_ids, history_path, logs_path):
     """Return prompt-only timelines for history sessions absent from
     ``known_session_ids``."""
     if not os.path.isfile(history_path) or not os.path.isfile(logs_path):
@@ -239,10 +284,21 @@ def build_history_only_timelines(known_session_ids, history_path=CODEX_HISTORY,
     except (OSError, sqlite3.Error):
         return []
 
-    return [_timeline_dict(CODEX_HISTORY, cwd, project["sessions"],
+    return [_timeline_dict(history_path, cwd, project["sessions"],
                            project["milestones"], project["branches"],
                            diagnostics=diagnostics)
             for cwd, project in sorted(projects.items())]
+
+
+def build_home_history_timelines(known_session_ids, homes):
+    """Prompt-only timelines recovered from each Codex home's history.jsonl
+    and logs_2.sqlite; a home without both files contributes none."""
+    timelines = []
+    for home in homes:
+        timelines += build_history_only_timelines(
+            known_session_ids, os.path.join(home, "history.jsonl"),
+            os.path.join(home, "logs_2.sqlite"))
+    return timelines
 
 
 def _parse_rollout(path):
@@ -273,7 +329,7 @@ def _parse_rollout(path):
         _finalize_milestone(m, milestones)
         cur_last_ms = None
 
-    with open(path, "rb") as fh:
+    with open(path, "rb", buffering=_READ_BUFFER) as fh:
         for line_number, raw_line in enumerate(fh, 1):
             try:
                 line = raw_line.decode("utf-8")
@@ -595,7 +651,7 @@ def build_codex_timelines(paths=None, parse=None):
     generator passes a cached version."""
     parse = parse or _parse_rollout
     if paths is None:
-        paths = [p for p, _ in iter_rollout_metas()]
+        paths = [p for p, _ in iter_rollout_metas(codex_home_rollouts([CODEX_HOME]))]
     projects = {}  # cwd -> sessions, milestones, branches, and diagnostics
     for path in sorted(paths):
         got = parse(path)
