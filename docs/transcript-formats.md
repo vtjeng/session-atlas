@@ -94,7 +94,8 @@ intervals are discarded.
 Envelope on every line: `{"timestamp": <ISO8601 ms UTC>, "type": T, "payload": {…}}`.
 First line is `session_meta` → `.payload.{id, cwd, cli_version, timestamp,
 git{branch}? (0.142+)}`. Sessions are date-organized, NOT project-organized —
-group by `cwd`.
+group by `cwd`. An archived conversation's rollout moves, with the same file
+name, into `~/.codex/archived_sessions/`, which has no date subdirectories.
 
 - **Typed prompts:** older rollouts use `event_msg` /
   `payload.type=="user_message"` (`.payload.message`). Current rollouts use
@@ -160,11 +161,12 @@ The archive mirrors these source layouts:
 
 Before parsing, an `--all` render builds live/archive manifests. For each
 Claude parent or nested-subagent relative path, and for each Codex rollout
-basename, it parses only the larger available copy. After parsing,
-`_merge_timelines` deduplicates Claude sessions by session ID, preferring more
-milestones and then later `last_ts`. See
-[Archive transcripts](../README.md#archive-transcripts) for commands,
-retention, privacy, and recovery.
+basename, it parses only the largest available copy. Codex copies come from
+the `sessions` and `archived_sessions` directories of each Codex home
+(`~/.codex` unless `--codex-home` names others), and from the archive. After parsing, `_merge_timelines`
+deduplicates Claude sessions by session ID, preferring more milestones and then
+later `last_ts`. See [Archive transcripts](../README.md#archive-transcripts) for
+commands, retention, privacy, and recovery.
 
 ## Verify after parser changes
 

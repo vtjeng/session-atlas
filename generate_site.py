@@ -35,10 +35,11 @@ from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity, _subagen
                        _is_transcript_dir, _iter_subagent_transcripts,
                        build_timeline, find_project_dir,
                        merge_token_models, parse_iso)
-from codex_parse import (CODEX_SESSIONS, _parse_rollout, build_codex_timelines,
-                         build_history_only_timelines,
-                         _associate_codex_subagents, iter_rollout_metas,
-                         rollout_paths)
+from codex_parse import (CODEX_HOME, CODEX_HOME_HELP, _parse_rollout,
+                         build_codex_timelines, build_home_history_timelines,
+                         _associate_codex_subagents, codex_home_dir,
+                         codex_home_rollouts, iter_rollout_metas,
+                         rollout_paths, select_rollouts)
 import pricing
 
 GENERATOR_META = '<meta name="generator" content="session-atlas">'
@@ -3306,12 +3307,12 @@ def _write_project(tl, out, slug, index_path=None, refreshed_at=None):
     return outfile
 
 
-def generate_all(out, archive):
+def generate_all(out, archive, codex_homes):
     with _render_lock(out):
-        return _generate_all_locked(out, archive, ParseCache(out))
+        return _generate_all_locked(out, archive, codex_homes, ParseCache(out))
 
 
-def _generate_all_locked(out, archive, cache):
+def _generate_all_locked(out, archive, codex_homes, cache):
     # Build one per-project manifest first. Live and archive can each hold the
     # fuller copy of a different append-only file; choosing the largest file by
     # relative path forms the correct union and avoids decoding duplicates.
@@ -3339,18 +3340,10 @@ def _generate_all_locked(out, archive, cache):
             continue
         by_path.setdefault(tl["project_path"].rstrip("/"), []).append(tl)
 
-    # codex: dedup live vs archived copies of the same rollout before parsing
-    codex_files = {}
-    roots = [CODEX_SESSIONS]
-    if os.path.isdir(os.path.join(archive, "codex")):
-        roots.append(os.path.join(archive, "codex"))
-    for root in roots:
-        for p in rollout_paths(root):
-            n = os.path.basename(p)
-            size = os.path.getsize(p)
-            if n not in codex_files or size > codex_files[n][0]:
-                codex_files[n] = (size, p)
-    codex_paths = [p for _, p in codex_files.values()]
+    # codex: dedup copies of the same rollout across the Codex homes and the
+    # archive before parsing
+    codex_paths = select_rollouts(codex_home_rollouts(codex_homes)
+                                  + rollout_paths(os.path.join(archive, "codex")))
     codex_timelines = build_codex_timelines(codex_paths, parse=cache.rollout_parser())
     # Every selected rollout's first metadata record is its authoritative ID.
     known_codex_ids = set()
@@ -3363,7 +3356,7 @@ def _generate_all_locked(out, archive, cache):
                 known_codex_ids.add(meta["id"])
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
-    codex_timelines.extend(build_history_only_timelines(known_codex_ids))
+    codex_timelines.extend(build_home_history_timelines(known_codex_ids, codex_homes))
     for path, timelines in _group_codex_timelines(codex_timelines).items():
         by_path.setdefault(path, []).extend(timelines)
 
@@ -3404,16 +3397,21 @@ def main():
     ap.add_argument("--archive", default="./archive",
                     help="archive root read by --all (default %(default)s; "
                          "see archive_transcripts.py)")
+    # argparse's append adds to a non-empty default, so the default is applied
+    # only when the option is absent.
+    ap.add_argument("--codex-home", action="append", type=codex_home_dir,
+                    metavar="DIR", help=CODEX_HOME_HELP)
     args = ap.parse_args()
+    codex_homes = args.codex_home or [CODEX_HOME]
 
     if args.all:
-        generate_all(args.out, args.archive)
+        generate_all(args.out, args.archive, codex_homes)
     elif args.project:
         with _render_lock(args.out):
             # Parse under the same lock as publication. Otherwise an older
             # standalone snapshot can wait behind --all and overwrite its newer
             # project page after the full generation completes.
-            tl = _single(args.project, ParseCache(args.out))
+            tl = _single(args.project, codex_homes, ParseCache(args.out))
             project_path = tl["project_path"].rstrip("/")
             slug = _allocate_project_slugs([project_path])[project_path]
             outfile = _write_project(tl, args.out, slug)
@@ -3422,7 +3420,7 @@ def main():
         ap.error("give a project name/path, or --all")
 
 
-def _single(target, cache=None):
+def _single(target, codex_homes, cache=None):
     """Build one project timeline from its selected Claude and Codex inputs.
 
     Primary Codex rollouts are selected by working directory. Related
@@ -3442,7 +3440,7 @@ def _single(target, cache=None):
         if os.path.isdir(target):
             path = os.path.abspath(target).rstrip("/")
 
-    metas = list(iter_rollout_metas())
+    metas = list(iter_rollout_metas(select_rollouts(codex_home_rollouts(codex_homes))))
     matches = []
     matched_repositories = set()
     for p, meta in metas:
@@ -3469,7 +3467,7 @@ def _single(target, cache=None):
     tls.extend(build_codex_timelines(
         matched_paths, parse=cache.rollout_parser() if cache else _parse_rollout))
     known_codex_ids = {meta.get("id") for _, meta in metas if meta.get("id")}
-    history_timelines = build_history_only_timelines(known_codex_ids)
+    history_timelines = build_home_history_timelines(known_codex_ids, codex_homes)
     for timeline in history_timelines:
         history_path = timeline["project_path"].rstrip("/")
         if ((path and history_path == path)

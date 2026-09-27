@@ -190,14 +190,39 @@ activity while preserving the chronological tool entries.
 
 ## Advanced tasks
 
+### Read sessions from another Codex home
+
+A Codex home is the directory where Codex keeps its state, `~/.codex` by
+default. Codex writes a live conversation's rollout under the home's
+`sessions/YYYY/MM/DD/` and moves an archived conversation's rollout into
+`archived_sessions/`, which has no date subdirectories. The Codex Windows app
+keeps its home at `C:\Users\<you>\.codex`, even when its agent works in WSL.
+
+By default, session-atlas reads only `~/.codex`. To read other homes, list
+every home with `--codex-home`, including `~/.codex` if you still want it:
+
+```bash
+python3 generate_site.py --all \
+  --codex-home ~/.codex \
+  --codex-home /mnt/c/Users/<you>/.codex
+```
+
+Replace `<you>` with your Windows user name. From each home, the generator
+reads the rollouts in `sessions` and `archived_sessions` and the prompts
+recovered from `history.jsonl` and `logs_2.sqlite`. It parses the largest copy
+of a rollout that appears in more than one home or in the archive.
+`archive_transcripts.py` accepts the same option and copies the rollouts from
+every home into `archive/codex/YYYY/MM/DD/`, taking the date from each file
+name.
+
 ### Refresh automatically with systemd
 
 The optional units in `systemd/user/` refresh `site/` on the schedule defined by
 `session-atlas-render.timer` on Linux systems with user-level systemd. Other
 platforms require another scheduler. Before linking the units, inspect
 `WorkingDirectory` and `ExecStart` in `session-atlas-render.service`. Set them
-for this checkout and its Python 3 interpreter, and add any nondefault `--out`
-or `--archive` options.
+for this checkout and its Python 3 interpreter, and add any nondefault `--out`,
+`--archive`, or `--codex-home` options.
 
 Install and start the timer from the repository root:
 

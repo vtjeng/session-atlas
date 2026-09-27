@@ -1,3 +1,4 @@
+import argparse
 import copy
 from collections import Counter
 import json
@@ -6,11 +7,14 @@ import re
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 from ccx_parse import (_has_substantive_activity, _new_activity, _new_milestone,
                        _timeline_dict)
-from codex_parse import (_parse_rollout, build_codex_timelines,
-                         build_history_only_timelines)
+import generate_site
+from codex_parse import (CODEX_HOME, _parse_rollout, build_codex_timelines,
+                         build_history_only_timelines, build_home_history_timelines,
+                         codex_home_dir, codex_home_rollouts, select_rollouts)
 from generate_site import (MINIMAP_MAX_ENTRIES, RECOVERED_PROMPT_EXPLANATION,
                            _group_codex_timelines, _merge_timelines, render,
                            render_index)
@@ -45,6 +49,132 @@ def _fragment_refs(page):
 
 def _element_ids(page):
     return re.findall(r' id="([^"]+)"', page)
+
+
+def _write_rollout(home, name, text, archived=False):
+    # Codex files a live rollout under <home>/sessions/YYYY/MM/DD/ and moves an
+    # archived one into <home>/archived_sessions/, which has no date
+    # subdirectories.
+    folder = (os.path.join(home, "archived_sessions") if archived
+              else os.path.join(home, "sessions", "2026", "07", "20"))
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, name)
+    with open(path, "w") as fh:
+        fh.write(text)
+    return path
+
+
+class CodexHomeTests(unittest.TestCase):
+    def test_select_rollouts_reads_every_home_and_keeps_the_fuller_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Two Codex homes, as when the Codex CLI in WSL and the Codex
+            # Windows app each keep their own.
+            first = os.path.join(tmp, "first")
+            second = os.path.join(tmp, "second")
+            # Only the second home holds this live rollout.
+            live = _write_rollout(
+                second,
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000002.jsonl",
+                "{}\n")
+            # Only the second home holds this archived rollout.
+            archived = _write_rollout(
+                second,
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000003.jsonl",
+                "{}\n", archived=True)
+            # Both homes hold this rollout: live in the first, archived in the
+            # second. The archived copy has one more record, so it is the
+            # fuller one and the only copy selected.
+            name = "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl"
+            _write_rollout(first, name, "{}\n")
+            fuller = _write_rollout(second, name, "{}\n{}\n", archived=True)
+
+            self.assertEqual(select_rollouts(codex_home_rollouts([first, second])),
+                             sorted([live, archived, fuller]))
+
+    def test_codex_home_option_rejects_a_directory_without_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = os.path.join(tmp, ".codex")
+            os.makedirs(os.path.join(home, "sessions"))
+            self.assertEqual(codex_home_dir(home), home)
+            # The directory above a Codex home, a likely mistake, holds
+            # neither sessions nor archived_sessions.
+            with self.assertRaises(argparse.ArgumentTypeError):
+                codex_home_dir(tmp)
+
+    def test_codex_home_option_expands_a_tilde(self):
+        # systemd passes ExecStart arguments without shell expansion, so the
+        # option itself must expand ~ the way the default home does.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".codex", "sessions"))
+            with mock.patch.dict(os.environ, {"HOME": tmp}):
+                self.assertEqual(codex_home_dir("~/.codex"),
+                                 os.path.join(tmp, ".codex"))
+
+    def test_select_rollouts_skips_a_rollout_that_moved_away(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kept = _write_rollout(
+                tmp,
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl",
+                "{}\n")
+            # Codex moved this rollout into archived_sessions after the glob
+            # listed it, so its listed path no longer exists.
+            moved = os.path.join(
+                os.path.dirname(kept),
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000002.jsonl")
+
+            self.assertEqual(select_rollouts([kept, moved]), [kept])
+
+    def test_parse_rollout_returns_none_for_a_rollout_that_moved_away(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Codex moved this rollout into archived_sessions after it was
+            # selected, so the render skips it instead of failing.
+            moved = os.path.join(
+                tmp, "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl")
+
+            self.assertIsNone(_parse_rollout(moved))
+
+    def test_codex_home_option_replaces_the_default_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "sessions"))
+            runs = {
+                # No option reads only the default home.
+                (): [CODEX_HOME],
+                # The option replaces the default instead of adding to it.
+                ("--codex-home", tmp): [tmp],
+            }
+            for extra, homes in runs.items():
+                with mock.patch("sys.argv", ["generate_site.py", "--all", *extra]), \
+                        mock.patch.object(generate_site, "generate_all") as generate_all:
+                    generate_site.main()
+                self.assertEqual(generate_all.call_args.args[2], homes)
+
+    def test_history_is_recovered_from_every_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # The first home has no history, like the Codex Windows app's home.
+            first = os.path.join(tmp, "first")
+            os.makedirs(os.path.join(first, "sessions"))
+            # The second home's history holds one prompt from a session whose
+            # rollout is gone, and its logs give that session's cwd.
+            second = os.path.join(tmp, "second")
+            os.makedirs(second)
+            with open(os.path.join(second, "history.jsonl"), "w") as fh:
+                fh.write(json.dumps({"session_id": "missing", "ts": 1784505601,
+                                     "text": "compare the two approaches"}) + "\n")
+            db = sqlite3.connect(os.path.join(second, "logs_2.sqlite"))
+            db.execute(
+                "CREATE TABLE logs (id INTEGER PRIMARY KEY, ts INTEGER, "
+                "ts_nanos INTEGER, feedback_log_body TEXT, thread_id TEXT)")
+            db.execute(
+                "INSERT INTO logs VALUES (?, ?, ?, ?, ?)",
+                (1, 1784505601, 0,
+                 'legacy_fallback_cwd: AbsolutePathBuf("/repo")', "missing"))
+            db.commit()
+            db.close()
+
+            timelines = build_home_history_timelines(set(), [first, second])
+
+        self.assertEqual([tl["project_path"] for tl in timelines], ["/repo"])
+        self.assertEqual(timelines[0]["stats"]["recovered_prompts"], 1)
 
 
 class CodexTokenParsingTests(unittest.TestCase):
