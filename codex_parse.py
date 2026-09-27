@@ -145,7 +145,9 @@ def codex_home_rollouts(homes):
 
 def codex_home_dir(value):
     """argparse type for ``--codex-home``: a directory that holds sessions or
-    archived_sessions."""
+    archived_sessions. It expands ``~`` because systemd passes ExecStart
+    arguments without shell expansion."""
+    value = os.path.expanduser(value)
     if not any(os.path.isdir(os.path.join(value, sub))
                for sub in ("sessions", "archived_sessions")):
         raise argparse.ArgumentTypeError(
@@ -160,7 +162,10 @@ def select_rollouts(paths):
     chosen = {}
     for path in paths:
         name = os.path.basename(path)
-        size = os.path.getsize(path)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue  # moved after the glob, as when Codex archives it
         if name not in chosen or size > chosen[name][0]:
             chosen[name] = (size, path)
     return sorted(path for _, path in chosen.values())
@@ -302,8 +307,9 @@ def build_home_history_timelines(known_session_ids, homes):
 
 
 def _parse_rollout(path):
-    """Return parsed rollout data, or ``None`` when no session metadata is
-    parsed, ``cwd`` is missing, or no milestone survives finalization."""
+    """Return parsed rollout data, or ``None`` when the file is gone, no
+    session metadata is parsed, ``cwd`` is missing, or no milestone survives
+    finalization."""
     sess_id = os.path.basename(path)[-42:-6]  # uuid from filename, fallback only
     cwd = None
     sess = None
@@ -329,7 +335,11 @@ def _parse_rollout(path):
         _finalize_milestone(m, milestones)
         cur_last_ms = None
 
-    with open(path, "rb", buffering=_READ_BUFFER) as fh:
+    try:
+        fh = open(path, "rb", buffering=_READ_BUFFER)
+    except FileNotFoundError:
+        return None  # moved after it was selected, as when Codex archives it
+    with fh:
         for line_number, raw_line in enumerate(fh, 1):
             try:
                 line = raw_line.decode("utf-8")

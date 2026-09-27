@@ -101,6 +101,38 @@ class CodexHomeTests(unittest.TestCase):
             with self.assertRaises(argparse.ArgumentTypeError):
                 codex_home_dir(tmp)
 
+    def test_codex_home_option_expands_a_tilde(self):
+        # systemd passes ExecStart arguments without shell expansion, so the
+        # option itself must expand ~ the way the default home does.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".codex", "sessions"))
+            with mock.patch.dict(os.environ, {"HOME": tmp}):
+                self.assertEqual(codex_home_dir("~/.codex"),
+                                 os.path.join(tmp, ".codex"))
+
+    def test_select_rollouts_skips_a_rollout_that_moved_away(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            kept = _write_rollout(
+                tmp,
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl",
+                "{}\n")
+            # Codex moved this rollout into archived_sessions after the glob
+            # listed it, so its listed path no longer exists.
+            moved = os.path.join(
+                os.path.dirname(kept),
+                "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000002.jsonl")
+
+            self.assertEqual(select_rollouts([kept, moved]), [kept])
+
+    def test_parse_rollout_returns_none_for_a_rollout_that_moved_away(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Codex moved this rollout into archived_sessions after it was
+            # selected, so the render skips it instead of failing.
+            moved = os.path.join(
+                tmp, "rollout-2026-07-20T00-00-00-00000000-0000-0000-0000-000000000001.jsonl")
+
+            self.assertIsNone(_parse_rollout(moved))
+
     def test_codex_home_option_replaces_the_default_home(self):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "sessions"))
