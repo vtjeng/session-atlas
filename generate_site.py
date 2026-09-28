@@ -3,7 +3,8 @@
 
     python3 generate_site.py example-project                 # -> ./site/<stable-slug>/index.html
     python3 generate_site.py /path/to/project --out ./out    # by path, custom out dir
-    python3 generate_site.py --all                           # every project + index page
+    python3 generate_site.py --all                           # every project + index page,
+                                                             # and the ./archive of parsed sessions
 
 The page shows each prompt and the activity that followed it, including tools,
 files, tokens, and agent active time. A top ribbon shows when sessions occurred, and a
@@ -33,13 +34,12 @@ from urllib.parse import quote
 
 from ccx_parse import (PROJECTS, _aggregate, _has_substantive_activity, _subagent_usage,
                        _is_transcript_dir, _iter_subagent_transcripts,
-                       build_timeline, find_project_dir,
+                       _timeline_dict, build_timeline, find_project_dir,
                        merge_token_models, parse_iso)
 from codex_parse import (CODEX_HOME, CODEX_HOME_HELP, _parse_rollout,
                          build_codex_timelines, build_home_history_timelines,
                          _associate_codex_subagents, codex_home_dir,
-                         codex_home_rollouts, iter_rollout_metas,
-                         rollout_paths, select_rollouts)
+                         codex_home_rollouts, iter_rollout_metas, select_rollouts)
 import pricing
 
 GENERATOR_META = '<meta name="generator" content="session-atlas">'
@@ -219,6 +219,7 @@ class ParseCache:
         self.hits = 0
         self.misses = 0
         self.used = set()   # entry paths read or written this run, for prune()
+        self.computed = set()   # (kind, name) of every entry parsed this run
 
     def _signature(self, paths):
         return (self.version,
@@ -248,6 +249,7 @@ class ParseCache:
             pass
         self.misses += 1
         value = compute()
+        self.computed.add((kind, name))
         fd, tmp = tempfile.mkstemp(prefix=".cache-", suffix=".tmp", dir=self.dir)
         try:
             with os.fdopen(fd, "wb") as fh:
@@ -309,6 +311,110 @@ class ParseCache:
 
     def summary(self):
         return f"parse cache: {self.hits} hit{_s(self.hits)}, {self.misses} miss{'' if self.misses == 1 else 'es'}"
+
+
+class SessionArchive:
+    """What session-atlas parsed from each session, kept after its transcript
+    is gone.
+
+    Claude Code and Codex can delete old transcripts. Every ``--all`` render
+    writes one JSON file per session: a Codex rollout's parse to
+    ``<root>/codex/<rollout name>.json``, and a Claude Code session with its
+    milestones to ``<root>/claude/<project directory>/<session id>.json``,
+    since one session's transcript can sit in two project directories. Only
+    projects that render are saved. A render reads an entry only when its
+    transcript is gone, so a live transcript is always parsed fresh. Entries
+    are never deleted, and an entry keeps the parse from the last render that
+    saw its transcript, so later parser changes do not reach it. Entries are
+    owner-only, like the pages, and hold the same private data.
+    """
+
+    FORMAT = 1
+
+    def __init__(self, root):
+        self.root = root
+
+    def _entry(self, *parts):
+        return os.path.join(self.root, *parts[:-1], f"{parts[-1]}.json")
+
+    def _write(self, path, entry):
+        # makedirs sets its mode only on the last directory, so set each one.
+        folder = self.root
+        _private_directory(folder)
+        for part in os.path.relpath(os.path.dirname(path), self.root).split(os.sep):
+            folder = os.path.join(folder, part)
+            _private_directory(folder)
+        fd, tmp = tempfile.mkstemp(prefix=".archive-", suffix=".tmp",
+                                   dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"format": self.FORMAT, **entry}, fh, ensure_ascii=False)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
+
+    @staticmethod
+    def codex_name(path):
+        """The rollout name that identifies a rollout or its entry."""
+        return os.path.basename(path).removesuffix(".jsonl").removesuffix(".json")
+
+    def has_codex(self, rollout):
+        return os.path.exists(self._entry("codex", self.codex_name(rollout)))
+
+    def save_codex(self, rollout, parsed):
+        cwd, session, milestones, branches, diagnostics = parsed
+        self._write(self._entry("codex", self.codex_name(rollout)),
+                    {"cwd": cwd, "session": session, "milestones": milestones,
+                     "branches": branches, "diagnostics": diagnostics})
+
+    def codex_entries(self):
+        return sorted(glob.glob(os.path.join(self.root, "codex", "rollout-*.json")))
+
+    @staticmethod
+    def load_codex(path):
+        """Return an entry in the shape ``_parse_rollout`` returns."""
+        with open(path, encoding="utf-8") as fh:
+            entry = json.load(fh)
+        return (entry["cwd"], entry["session"], entry["milestones"],
+                Counter(entry["branches"]), entry["diagnostics"])
+
+    def has_claude(self, project, timeline):
+        return all(os.path.exists(self._entry("claude", project, s["id"]))
+                   for s in timeline["sessions"])
+
+    def save_claude(self, project, timeline):
+        """Save each session of ``timeline``, parsed from the Claude Code
+        project directory named ``project``."""
+        by_session = {}
+        for milestone in timeline["milestones"]:
+            by_session.setdefault(milestone["session"], []).append(milestone)
+        for session in timeline["sessions"]:
+            self._write(self._entry("claude", project, session["id"]),
+                        {"project_path": timeline["project_path"], "session": session,
+                         "milestones": by_session.get(session["id"], [])})
+
+    def claude_timelines(self, live):
+        """One timeline per archived session whose transcript is gone.
+
+        ``live`` holds a (project directory, session id) pair for every live
+        session. ``_merge_timelines`` orders the archived sessions among the
+        project's other sessions."""
+        timelines = []
+        for path in sorted(glob.glob(os.path.join(self.root, "claude", "*", "*.json"))):
+            project = os.path.basename(os.path.dirname(path))
+            if (project, os.path.basename(path).removesuffix(".json")) in live:
+                continue
+            with open(path, encoding="utf-8") as fh:
+                entry = json.load(fh)
+            timelines.append(_timeline_dict(
+                os.path.dirname(path), entry["project_path"], [entry["session"]],
+                entry["milestones"], Counter()))
+        return timelines
 
 
 def _project_slug_base(project_path):
@@ -3269,23 +3375,6 @@ def _render_lock(out):
         yield
 
 
-def _claude_manifest(dirs):
-    """Select the fuller live/archive copy of every relative Claude log path."""
-    manifest = {}
-    for d in dirs:
-        paths = glob.glob(os.path.join(d, "*.jsonl")) + _iter_subagent_transcripts(d)
-        for path in paths:
-            rel = os.path.relpath(path, d)
-            candidate = (os.path.getsize(path), path)
-            if rel not in manifest or candidate[0] > manifest[rel][0]:
-                manifest[rel] = candidate
-    top = [manifest[rel][1] for rel in manifest
-           if "subagents" not in os.path.normpath(rel).split(os.sep)]
-    nested = [manifest[rel][1] for rel in manifest
-              if "subagents" in os.path.normpath(rel).split(os.sep)]
-    return sorted(top), sorted(nested)
-
-
 def _write_project(tl, out, slug, index_path=None, refreshed_at=None):
     outdir = _project_output_dir(out, slug)
     _private_directory(outdir)
@@ -3309,44 +3398,59 @@ def _write_project(tl, out, slug, index_path=None, refreshed_at=None):
 
 def generate_all(out, archive, codex_homes):
     with _render_lock(out):
-        return _generate_all_locked(out, archive, codex_homes, ParseCache(out))
+        return _generate_all_locked(out, SessionArchive(archive), codex_homes,
+                                    ParseCache(out))
 
 
 def _generate_all_locked(out, archive, codex_homes, cache):
-    # Build one per-project manifest first. Live and archive can each hold the
-    # fuller copy of a different append-only file; choosing the largest file by
-    # relative path forms the correct union and avoids decoding duplicates.
-    claude_dirs = sorted(glob.glob(os.path.join(PROJECTS, "*")))
-    if os.path.isdir(os.path.join(archive, "claude")):
-        claude_dirs += sorted(glob.glob(os.path.join(archive, "claude", "*")))
-    dir_groups = {}
-    for d in claude_dirs:
-        if os.path.isdir(d):
-            dir_groups.setdefault(os.path.basename(d.rstrip("/")), []).append(d)
     by_path = {}
-    for base, dirs in sorted(dir_groups.items()):
-        top, nested = _claude_manifest(dirs)
+    live_claude = set()
+    for d in sorted(glob.glob(os.path.join(PROJECTS, "*"))):
+        if not os.path.isdir(d):
+            continue
+        base = os.path.basename(d)
+        top = sorted(glob.glob(os.path.join(d, "*.jsonl")))
+        nested = sorted(_iter_subagent_transcripts(d))
         if not top:
-            if any(d.startswith(PROJECTS + os.sep) for d in dirs):
-                print(f"  skipped (no transcripts): {base}")
+            print(f"  skipped (no transcripts): {base}")
             continue
         tl = cache.get("claude", base, top + nested,
-                       lambda: build_timeline(dirs[0], session_paths=top,
+                       lambda: build_timeline(d, session_paths=top,
                                               subagent_paths=nested,
                                               subagent_usage=cache.subagent_usage()))
         cache.touch("subagent", nested)
+        live_claude.update((base, s["id"]) for s in tl["sessions"])
         if not tl["milestones"]:
             print(f"  skipped (no inputs): {base}")
             continue
+        if ("claude", base) in cache.computed or not archive.has_claude(base, tl):
+            archive.save_claude(base, tl)
+        by_path.setdefault(tl["project_path"].rstrip("/"), []).append(tl)
+    for tl in archive.claude_timelines(live_claude):
         by_path.setdefault(tl["project_path"].rstrip("/"), []).append(tl)
 
-    # codex: dedup copies of the same rollout across the Codex homes and the
-    # archive before parsing
-    codex_paths = select_rollouts(codex_home_rollouts(codex_homes)
-                                  + rollout_paths(os.path.join(archive, "codex")))
-    codex_timelines = build_codex_timelines(codex_paths, parse=cache.rollout_parser())
-    # Every selected rollout's first metadata record is its authoritative ID.
+    # codex: dedup copies of the same rollout across the Codex homes, then add
+    # the archived parse of every rollout that is gone
+    codex_paths = select_rollouts(codex_home_rollouts(codex_homes))
+    live_names = {SessionArchive.codex_name(p) for p in codex_paths}
+    archived = {p for p in archive.codex_entries()
+                if SessionArchive.codex_name(p) not in live_names}
+    rollout_parser = cache.rollout_parser()
     known_codex_ids = set()
+
+    def parse(path):
+        if path in archived:
+            parsed = SessionArchive.load_codex(path)
+            known_codex_ids.add(parsed[1]["id"])
+            return parsed
+        parsed = rollout_parser(path)
+        if parsed and (("rollout", path) in cache.computed
+                       or not archive.has_codex(path)):
+            archive.save_codex(path, parsed)
+        return parsed
+
+    codex_timelines = build_codex_timelines(codex_paths + sorted(archived), parse=parse)
+    # Every selected rollout's first metadata record is its authoritative ID.
     for path in codex_paths:
         try:
             with open(path, "rb") as fh:
@@ -3395,8 +3499,8 @@ def main():
     ap.add_argument("--out", default="./site",
                     help="output directory (default %(default)s)")
     ap.add_argument("--archive", default="./archive",
-                    help="archive root read by --all (default %(default)s; "
-                         "see archive_transcripts.py)")
+                    help="parsed-session archive that --all writes and reads, so "
+                         "sessions outlive deleted transcripts (default %(default)s)")
     # argparse's append adds to a non-empty default, so the default is applied
     # only when the option is absent.
     ap.add_argument("--codex-home", action="append", type=codex_home_dir,

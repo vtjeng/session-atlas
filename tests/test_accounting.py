@@ -6,11 +6,9 @@ from unittest import mock
 
 import generate_site
 import pricing
-from archive_transcripts import _copy
 from ccx_parse import _subagent_usage, build_timeline
 from generate_site import (_allocate_project_slugs, _atomic_write_text,
-                           _breakdown_table, _claude_manifest,
-                           _project_output_dir, cost_display)
+                           _breakdown_table, _project_output_dir, cost_display)
 
 
 def _assistant(ts, mid, model, usage):
@@ -121,35 +119,6 @@ class AccountingTests(unittest.TestCase):
                 os.path.join(tmp, "stale-with-notes", "index.html")))
             self.assertTrue(os.path.exists(
                 os.path.join(tmp, "stale-with-notes", "notes.txt")))
-
-    def test_archive_copy_enforces_private_file_and_directory_modes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = os.path.join(tmp, "source.jsonl")
-            archive_root = os.path.join(tmp, "archive")
-            destination = os.path.join(archive_root, "codex", "2026", "entry.jsonl")
-            with open(source, "w") as fh:
-                # One complete JSON record is enough to exercise the copy path.
-                fh.write('{}\n')
-            # A world-readable source verifies that the archive does not preserve
-            # a permissive source mode.
-            os.chmod(source, 0o644)
-
-            self.assertEqual(_copy(source, destination, archive_root), "new")
-            self.assertEqual(os.stat(destination).st_mode & 0o777, 0o600)
-            self.assertEqual(os.stat(archive_root).st_mode & 0o777, 0o700)
-            self.assertEqual(
-                os.stat(os.path.join(archive_root, "codex")).st_mode & 0o777,
-                0o700,
-            )
-            self.assertEqual(
-                os.stat(os.path.join(archive_root, "codex", "2026")).st_mode & 0o777,
-                0o700,
-            )
-
-            # A later no-op archive run must repair a mode changed after creation.
-            os.chmod(destination, 0o644)
-            self.assertEqual(_copy(source, destination, archive_root), "kept")
-            self.assertEqual(os.stat(destination).st_mode & 0o777, 0o600)
 
     def test_claude_cache_write_ttls_survive_stream_dedup_and_price_separately(self):
         usage1 = {"input_tokens": 3, "output_tokens": 4,
@@ -287,27 +256,6 @@ class AccountingTests(unittest.TestCase):
             _atomic_write_text(path, "new")
             with open(path) as fh:
                 self.assertEqual(fh.read(), "new")
-
-    def test_claude_manifest_takes_fuller_parent_and_child_independently(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            live = os.path.join(tmp, "live", "project")
-            archive = os.path.join(tmp, "archive", "project")
-            for root in (live, archive):
-                os.makedirs(os.path.join(root, "sid", "subagents"))
-            paths = {
-                os.path.join(live, "sid.jsonl"): "live-parent-long",
-                os.path.join(archive, "sid.jsonl"): "old",
-                os.path.join(live, "sid", "subagents", "agent-a.jsonl"): "old",
-                os.path.join(archive, "sid", "subagents", "agent-a.jsonl"):
-                    "archive-child-long",
-            }
-            for path, content in paths.items():
-                with open(path, "w") as fh:
-                    fh.write(content)
-            top, nested = _claude_manifest([live, archive])
-        self.assertEqual(top, [os.path.join(live, "sid.jsonl")])
-        self.assertEqual(nested,
-                         [os.path.join(archive, "sid", "subagents", "agent-a.jsonl")])
 
     def test_main_claude_parser_keeps_both_cache_write_ttls(self):
         with tempfile.TemporaryDirectory() as tmp:

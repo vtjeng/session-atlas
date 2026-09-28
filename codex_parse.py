@@ -663,7 +663,7 @@ def build_codex_timelines(paths=None, parse=None):
     if paths is None:
         paths = [p for p, _ in iter_rollout_metas(codex_home_rollouts([CODEX_HOME]))]
     projects = {}  # cwd -> sessions, milestones, branches, and diagnostics
-    for path in sorted(paths):
+    for path in sorted(paths, key=os.path.basename):
         got = parse(path)
         if not got:
             continue
