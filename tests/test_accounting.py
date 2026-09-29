@@ -165,21 +165,31 @@ class AccountingTests(unittest.TestCase):
         self.assertIn('Estimated cost by model (test):', card)
         self.assertIn('<ul class="category-help"><li><b>input:</b>', card)
 
-    def test_models_added_2026_09_25_price_at_their_published_rates(self):
+    def test_added_models_price_at_their_published_rates(self):
         # One million tokens in each category turns each cost into the rate
         # itself, so the expected values are the published per-1M prices.
         tokens = {key: 1_000_000 for key, _ in pricing.CATEGORIES}
         expected = {
-            # Opus 5.5: $4 input, $20 output, cache reads at 0.05x input
-            # ($0.20, not the usual 0.1x), 1.25x and 2x input cache writes.
+            # Added 2026-09-25. Opus 5.5: $4 input, $20 output, cache reads
+            # at 0.05x input ($0.20, not the usual 0.1x), 1.25x and 2x input
+            # cache writes.
             "claude-opus-5-5": {"in": 4.0, "out": 20.0, "cr": 0.20,
                                 "cc": 5.0, "cc1h": 8.0},
-            # gpt-6-sol and gpt-6-luna: OpenAI's published input, output,
-            # cached-input, and cache-write prices; no one-hour category.
+            # Added 2026-09-25. gpt-6-sol and gpt-6-luna: OpenAI's published
+            # input, output, cached-input, and cache-write prices; no
+            # one-hour category.
             "gpt-6-sol": {"in": 2.0, "out": 10.0, "cr": 0.20,
                           "cc": 2.5, "cc1h": 0.0},
             "gpt-6-luna": {"in": 0.10, "out": 0.50, "cr": 0.01,
                            "cc": 0.125, "cc1h": 0.0},
+            # Added 2026-09-29. Sonnet 5.5: Sonnet 5's $2 input and $10
+            # output, with the standard 0.1x, 1.25x, and 2x cache multipliers.
+            "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cr": 0.20,
+                                  "cc": 2.5, "cc1h": 4.0},
+            # Added 2026-09-29. gpt-6.1-sol keeps gpt-6-sol's input, output,
+            # and cache-write prices, but cached input halves to $0.10.
+            "gpt-6.1-sol": {"in": 2.0, "out": 10.0, "cr": 0.10,
+                            "cc": 2.5, "cc1h": 0.0},
         }
         for model, costs in expected.items():
             with self.subTest(model=model):
