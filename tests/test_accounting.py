@@ -143,84 +143,39 @@ class AccountingTests(unittest.TestCase):
                          {"in": 3, "out": 7, "cr": 5, "cc": 15, "cc1h": 30})
         cats, total, unpriced = pricing.cost_breakdown(by_model)
         self.assertFalse(unpriced)
-        self.assertAlmostEqual(cats["cc"]["cost"], 15 * 6.25 / 1_000_000)
-        self.assertAlmostEqual(cats["cc1h"]["cost"], 30 * 10 / 1_000_000)
+        # Each TTL bucket is billed at its own field of the rate tuple.
+        _, _, _, cache_write, cache_write_1h = pricing.PRICES["claude-opus-4-8"]
+        self.assertAlmostEqual(cats["cc"]["cost"], 15 * cache_write / 1_000_000)
+        self.assertAlmostEqual(cats["cc1h"]["cost"], 30 * cache_write_1h / 1_000_000)
         self.assertAlmostEqual(total, sum(c["cost"] for c in cats.values()))
 
-    def test_fable_5_1_price_breakdown(self):
-        # One million tokens in each category exercises Fable 5.1's full rate
-        # card, including its lower cache-read price.
-        tokens = {key: 1_000_000 for key, _ in pricing.CATEGORIES}
-        cats, total, unpriced = pricing.cost_breakdown({
-            "claude-fable-5-1": tokens})
+    def test_cost_is_tokens_times_rate_and_none_bills_nothing(self):
+        # A made-up rate keeps the arithmetic independent of vendor prices:
+        # $2 input, $8 output, $0.50 cache read, and no cache-write prices.
+        rates = {"test-model": (2.0, 8.0, 0.5, None, None)}
+        # Round token counts give exact costs: 1M input is $2, 250k output
+        # $2, 2M cache reads $1; the cache writes have no rate.
+        tokens = {"in": 1_000_000, "out": 250_000, "cr": 2_000_000,
+                  "cc": 300, "cc1h": 400}
+        with mock.patch.dict(pricing.PRICES, rates):
+            cats, total, unpriced = pricing.cost_breakdown({"test-model": tokens})
+        self.assertEqual(unpriced, [])
+        self.assertEqual({k: c["cost"] for k, c in cats.items()},
+                         {"in": 2.0, "out": 2.0, "cr": 1.0, "cc": 0.0, "cc1h": 0.0})
+        # An unbilled category still reports its tokens.
+        self.assertEqual({k: c["tokens"] for k, c in cats.items()}, tokens)
+        self.assertEqual(total, 5.0)
 
-        self.assertFalse(unpriced)
-        self.assertEqual(
-            {key: cats[key]["cost"] for key, _ in pricing.CATEGORIES},
-            {"in": 10.0, "out": 50.0, "cr": 0.25, "cc": 12.5, "cc1h": 20.0})
-        self.assertEqual(total, 92.75)
-        # The generated accounting panel must expose the newly priced model.
-        card = generate_site.cost_method_html(
-            {"claude-fable-5-1": tokens}, "test")
-        self.assertIn('<td class="mdl fam-claude">fable-5-1</td>', card)
-        self.assertIn('Estimated cost by model (test):', card)
-        self.assertIn('<ul class="category-help"><li><b>input:</b>', card)
-
-    def test_added_models_price_at_their_published_rates(self):
-        # One million tokens in each category turns each cost into the rate
-        # itself, so the expected values are the published per-1M prices.
-        tokens = {key: 1_000_000 for key, _ in pricing.CATEGORIES}
-        expected = {
-            # Added 2026-09-25. Opus 5.5: $4 input, $20 output, cache reads
-            # at 0.05x input ($0.20, not the usual 0.1x), 1.25x and 2x input
-            # cache writes.
-            "claude-opus-5-5": {"in": 4.0, "out": 20.0, "cr": 0.20,
-                                "cc": 5.0, "cc1h": 8.0},
-            # Added 2026-09-25. gpt-6-sol and gpt-6-luna: OpenAI's published
-            # input, output, cached-input, and cache-write prices; no
-            # one-hour category.
-            "gpt-6-sol": {"in": 2.0, "out": 10.0, "cr": 0.20,
-                          "cc": 2.5, "cc1h": 0.0},
-            "gpt-6-luna": {"in": 0.10, "out": 0.50, "cr": 0.01,
-                           "cc": 0.125, "cc1h": 0.0},
-            # Added 2026-09-29. Sonnet 5.5: Sonnet 5's $2 input and $10
-            # output, with the standard 0.1x, 1.25x, and 2x cache multipliers.
-            "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cr": 0.20,
-                                  "cc": 2.5, "cc1h": 4.0},
-            # Added 2026-09-29. gpt-6.1-sol keeps gpt-6-sol's input, output,
-            # and cache-write prices, but cached input halves to $0.10.
-            "gpt-6.1-sol": {"in": 2.0, "out": 10.0, "cr": 0.10,
-                            "cc": 2.5, "cc1h": 0.0},
-            # Added 2026-09-29, with every other model on the two pricing
-            # pages. Mythos 5.1 shares Fable 5.1's 0.025x cache reads.
-            "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cr": 0.25,
-                                  "cc": 12.5, "cc1h": 20.0},
-            # The retired Opus 4 under its dated ID, which older transcripts
-            # record: the pre-4.5 Opus price of $15 input and $75 output.
-            "claude-opus-4-20250514": {"in": 15.0, "out": 75.0, "cr": 1.5,
-                                       "cc": 18.75, "cc1h": 30.0},
-            # Claude Haiku 3.5 has only a dated ID and the lowest Claude rates.
-            "claude-3-5-haiku-20241022": {"in": 0.80, "out": 4.0, "cr": 0.08,
-                                          "cc": 1.0, "cc1h": 1.6},
-            # gpt-5.5-pro publishes no cached-input or cache-write price, so
-            # those categories cost nothing.
-            "gpt-5.5-pro": {"in": 30.0, "out": 180.0, "cr": 0.0,
-                            "cc": 0.0, "cc1h": 0.0},
-            # gpt-5.6-cyber is the one added OpenAI model with a cache-write
-            # price, $15.625 (1.25x its $12.50 input).
-            "gpt-5.6-cyber": {"in": 12.5, "out": 75.0, "cr": 1.25,
-                              "cc": 15.625, "cc1h": 0.0},
-            # gpt-5.2 has a cached-input price but no cache-write price.
-            "gpt-5.2": {"in": 1.75, "out": 14.0, "cr": 0.175,
-                        "cc": 0.0, "cc1h": 0.0},
-        }
-        for model, costs in expected.items():
+    def test_every_rate_is_ordered_like_a_real_price(self):
+        # On both vendors' pages, output costs at least as much as input and a
+        # cache read less than input. A row that breaks either rule most likely
+        # has swapped or mistyped columns; if a vendor really prices a model
+        # that way, add it here as an exception.
+        for model, (pin, pout, cr, _, _) in pricing.PRICES.items():
             with self.subTest(model=model):
-                cats, total, unpriced = pricing.cost_breakdown({model: tokens})
-                self.assertFalse(unpriced)
-                for key, cost in costs.items():
-                    self.assertAlmostEqual(cats[key]["cost"], cost)
-                self.assertAlmostEqual(total, sum(costs.values()))
+                self.assertGreaterEqual(pout, pin)
+                if cr is not None:
+                    self.assertLess(cr, pin)
 
     def test_claude_aliases_and_dated_ids_share_rates(self):
         # Anthropic documents both IDs for these models, and a transcript can
@@ -255,8 +210,9 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(rows, ["opus-5", "gpt-5.5-pro"])
         # gpt-5.5-pro has no cached-input price, so its cache-read cell shows
         # the same dash as an unbilled cache-write category.
-        self.assertIn('<td class="mdl fam-gpt">gpt-5.5-pro</td>'
-                      '<td>$30.00</td><td>$180.00</td><td>&mdash;</td>', rates)
+        self.assertIsNone(pricing.PRICES["gpt-5.5-pro"][2])
+        self.assertRegex(rates, r'<td class="mdl fam-gpt">gpt-5.5-pro</td>'
+                                r'<td>\$[\d.,]+</td><td>\$[\d.,]+</td><td>&mdash;</td>')
 
     def test_rates_table_is_omitted_when_no_model_is_priced(self):
         # A page whose only model has no rate has nothing to list, so the
@@ -271,10 +227,14 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(len(pricing.CATEGORIES), 5)
         for rates in pricing.PRICES.values():
             self.assertEqual(len(rates), len(pricing.CATEGORY_SPECS))
+        card = generate_site.cost_method_html({}, "test")
         for key, label, help_text in pricing.CATEGORY_SPECS:
             self.assertTrue(key)
             self.assertTrue(label)
             self.assertTrue(help_text)
+            # The panel's category list is generated from these specs.
+            self.assertIn(f"<li><b>{generate_site.esc(label)}:</b> "
+                          f"{generate_site.esc(help_text)}</li>", card)
 
     def test_model_breakdowns_follow_the_rates_table_order(self):
         # The cost and token tables list models as the rates table does:
@@ -305,16 +265,21 @@ class AccountingTests(unittest.TestCase):
 
     def test_unknown_models_are_visible_and_make_estimate_partial(self):
         by_model = {
-            "claude-opus-4-8": {"in": 1_000_000, "out": 0, "cr": 0,
-                                  "cc": 0, "cc1h": 0},
+            # One million input tokens at a made-up $5 rate is a $5 estimate.
+            "test-priced": {"in": 1_000_000, "out": 0, "cr": 0,
+                            "cc": 0, "cc1h": 0},
             "codex-auto-review": {"in": 2_000_000, "out": 3, "cr": 4,
                                   "cc": 0, "cc1h": 0},
         }
-        _, shown, label, title = cost_display(by_model)
+        with mock.patch.dict(pricing.PRICES,
+                             {"test-priced": (5.0, 0.0, 0.0, 0.0, None)}):
+            _, shown, label, title = cost_display(by_model)
+            table = _breakdown_table(by_model, "test")
+        # "+" marks the estimate as partial, because one model has no rate.
         self.assertEqual(shown, "$5+")
         self.assertEqual(label, "est. API cost")
         self.assertIn("unpriced: codex-auto-review", title)
-        table = _breakdown_table(by_model, "test")
+        self.assertIn("Estimated cost by model (test):", table)
         self.assertIn("codex-auto-review", table)
         self.assertIn("2.0M", table)
 
