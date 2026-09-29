@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -190,6 +191,28 @@ class AccountingTests(unittest.TestCase):
             # and cache-write prices, but cached input halves to $0.10.
             "gpt-6.1-sol": {"in": 2.0, "out": 10.0, "cr": 0.10,
                             "cc": 2.5, "cc1h": 0.0},
+            # Added 2026-09-29, with every other model on the two pricing
+            # pages. Mythos 5.1 shares Fable 5.1's 0.025x cache reads.
+            "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cr": 0.25,
+                                  "cc": 12.5, "cc1h": 20.0},
+            # The retired Opus 4 under its dated ID, which older transcripts
+            # record: the pre-4.5 Opus price of $15 input and $75 output.
+            "claude-opus-4-20250514": {"in": 15.0, "out": 75.0, "cr": 1.5,
+                                       "cc": 18.75, "cc1h": 30.0},
+            # Claude Haiku 3.5 has only a dated ID and the lowest Claude rates.
+            "claude-3-5-haiku-20241022": {"in": 0.80, "out": 4.0, "cr": 0.08,
+                                          "cc": 1.0, "cc1h": 1.6},
+            # gpt-5.5-pro publishes no cached-input or cache-write price, so
+            # those categories cost nothing.
+            "gpt-5.5-pro": {"in": 30.0, "out": 180.0, "cr": 0.0,
+                            "cc": 0.0, "cc1h": 0.0},
+            # gpt-5.6-cyber is the one added OpenAI model with a cache-write
+            # price, $15.625 (1.25x its $12.50 input).
+            "gpt-5.6-cyber": {"in": 12.5, "out": 75.0, "cr": 1.25,
+                              "cc": 15.625, "cc1h": 0.0},
+            # gpt-5.2 has a cached-input price but no cache-write price.
+            "gpt-5.2": {"in": 1.75, "out": 14.0, "cr": 0.175,
+                        "cc": 0.0, "cc1h": 0.0},
         }
         for model, costs in expected.items():
             with self.subTest(model=model):
@@ -198,6 +221,50 @@ class AccountingTests(unittest.TestCase):
                 for key, cost in costs.items():
                     self.assertAlmostEqual(cats[key]["cost"], cost)
                 self.assertAlmostEqual(total, sum(costs.values()))
+
+    def test_claude_aliases_and_dated_ids_share_rates(self):
+        # Anthropic documents both IDs for these models, and a transcript can
+        # record either, so each pair must carry the same rates.
+        pairs = [
+            ("claude-opus-4-5", "claude-opus-4-5-20251101"),
+            ("claude-opus-4-1", "claude-opus-4-1-20250805"),
+            ("claude-opus-4-0", "claude-opus-4-20250514"),
+            ("claude-sonnet-4-5", "claude-sonnet-4-5-20250929"),
+            ("claude-sonnet-4-0", "claude-sonnet-4-20250514"),
+            ("claude-haiku-4-5", "claude-haiku-4-5-20251001"),
+        ]
+        for alias, dated in pairs:
+            with self.subTest(alias=alias):
+                self.assertEqual(pricing.PRICES[alias], pricing.PRICES[dated])
+
+    def test_rates_table_lists_only_models_with_token_use(self):
+        # opus-5 and gpt-5.5-pro carry tokens; sonnet-5 appears with all-zero
+        # counts; codex-auto-review has tokens but no rate. Only the first two
+        # get a rates row, in PRICES order, so the table stays short even
+        # though PRICES lists every published model.
+        used = {key: 1_000 for key, _ in pricing.CATEGORIES}
+        by_model = {
+            "gpt-5.5-pro": used,
+            "claude-opus-5": used,
+            "claude-sonnet-5": {key: 0 for key, _ in pricing.CATEGORIES},
+            "codex-auto-review": used,
+        }
+        card = generate_site.cost_method_html(by_model, "test")
+        rates = card.split("Rates used (per 1M tokens):", 1)[1]
+        rows = re.findall(r'<td class="mdl fam-\w+">([^<]+)</td>', rates)
+        self.assertEqual(rows, ["opus-5", "gpt-5.5-pro"])
+        # gpt-5.5-pro has no cached-input price, so its cache-read cell shows
+        # the same dash as an unbilled cache-write category.
+        self.assertIn('<td class="mdl fam-gpt">gpt-5.5-pro</td>'
+                      '<td>$30.00</td><td>$180.00</td><td>&mdash;</td>', rates)
+
+    def test_rates_table_is_omitted_when_no_model_is_priced(self):
+        # A page whose only model has no rate has nothing to list, so the
+        # rates heading goes too; the excluded-model note still explains why.
+        card = generate_site.cost_method_html(
+            {"codex-auto-review": {"in": 5}}, "test")
+        self.assertNotIn("Rates used", card)
+        self.assertIn("Excluded (no rate): codex-auto-review.", card)
 
     def test_each_rate_field_has_one_documented_category(self):
         self.assertEqual(len(pricing.CATEGORY_SPECS), 5)

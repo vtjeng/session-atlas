@@ -592,7 +592,7 @@ def cost_display(by_model):
 
 def _rate(x):
     """Format a $/1M-token rate, keeping sub-cent precision when it matters."""
-    return f"${x:,.2f}" if round(x * 100) == x * 100 else f"${x:,.3f}"
+    return f"${x:,.2f}" if round(x, 2) == x else f"${x:,.3f}"
 
 
 _GRID_CLOSE = "</tbody></table></div>"
@@ -695,16 +695,23 @@ def _breakdown_table(by_model, scope):
 
 def cost_method_html(by_model, scope):
     """Expandable pricing panel in the page hero: computation, breakdown, and rates."""
-    _, _, unpriced = pricing.cost_breakdown(by_model or {})
+    by_model = by_model or {}
+    _, _, unpriced = pricing.cost_breakdown(by_model)
     cat_labels = [label for _, label in pricing.CATEGORIES]
+    # PRICES lists every published model, so show only the ones this page used.
+    used = {mid for mid, tk in by_model.items()
+            if any(tk.get(k, 0) for k, _ in pricing.CATEGORIES)}
     rate_rows = []
-    for mid, (pin, pout, pcr, pcc, pcc1h) in pricing.PRICES.items():
-        cw = "&mdash;" if pcc is None else _rate(pcc)  # None = category not billed
-        cw1h = "&mdash;" if pcc1h is None else _rate(pcc1h)
-        rate_rows.append(
-            f'<tr>{_model_td(mid)}<td>{_rate(pin)}</td>'
-            f'<td>{_rate(pout)}</td><td>{_rate(pcr)}</td><td>{cw}</td>'
-            f'<td>{cw1h}</td></tr>')
+    for mid, rates in pricing.PRICES.items():
+        if mid not in used:
+            continue
+        cells = "".join(  # None = category not billed
+            f'<td>{"&mdash;" if r is None else _rate(r)}</td>' for r in rates)
+        rate_rows.append(f'<tr>{_model_td(mid)}{cells}</tr>')
+    rates_table = (
+        '<p class="sh">Rates used (per 1M tokens):</p>'
+        f'{_grid_open(["model", *cat_labels])}{"".join(rate_rows)}{_GRID_CLOSE}'
+        if rate_rows else "")
     excl = ""
     if unpriced:
         excl = (f'<p class="excl">Excluded (no rate): {esc(", ".join(unpriced))}. '
@@ -723,9 +730,7 @@ def cost_method_html(by_model, scope):
         f"<p>Rates are standard published list prices per 1M tokens, as of "
         f"<b>{esc(pricing.AS_OF)}</b>.</p>"
         f'{_breakdown_table(by_model, scope)}'
-        '<p class="sh">Rates used (per 1M tokens):</p>'
-        f'{_grid_open(["model", *cat_labels])}{"".join(rate_rows)}{_GRID_CLOSE}'
-        f'{excl}</div></details>')
+        f'{rates_table}{excl}</div></details>')
 
 
 def cost_breakdown_title(by_model):
