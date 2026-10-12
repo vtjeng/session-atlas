@@ -10,9 +10,8 @@ Each entry is ``(input, output, cache_read, cache_write, cache_write_1h)``
 per 1M tokens:
   input        uncached prompt tokens, full rate
   output       generated tokens
-  cache_read   tokens served from cache (cheaper): Anthropic 0.1x input
-               (0.025x on Fable 5.1 and Mythos 5.1, 0.05x on Opus 5.5), OpenAI
-               its published cached-input rate
+  cache_read   tokens served from cache (cheaper): each vendor's published
+               cache-read / cached-input rate, which varies by model
   cache_write  standard writes: Anthropic 5-minute TTL and OpenAI's 30-minute
                TTL are 1.25x input.
   cache_write_1h  Anthropic's extended one-hour TTL, at 2x input.
@@ -24,7 +23,7 @@ never priced.
 site shows only the rates of models that a page's sessions used.
 """
 
-AS_OF = "2026-09-29"
+AS_OF = "2026-10-12"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
@@ -48,7 +47,7 @@ PRICES = {
     "claude-opus-4-0": (15.00, 75.00, 1.500, 18.75, 30.00),
     "claude-opus-4-20250514":
                          (15.00, 75.00, 1.500, 18.75, 30.00),
-    "claude-sonnet-5-5":(2.00, 10.00, 0.200,  2.50,  4.00),
+    "claude-sonnet-5-5":(2.00, 10.00, 0.100,  2.50,  4.00),
     "claude-sonnet-5": ( 2.00, 10.00, 0.200,  2.50,  4.00),
     "claude-sonnet-4-6":
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
@@ -60,6 +59,7 @@ PRICES = {
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
     "claude-sonnet-4-20250514":
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
+    "claude-haiku-5-5":( 0.10,  0.50, 0.010,  0.125, 0.20),
     "claude-haiku-4-5":( 1.00,  5.00, 0.100,  1.25,  2.00),
     "claude-haiku-4-5-20251001":
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
