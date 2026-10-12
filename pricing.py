@@ -10,9 +10,8 @@ Each entry is ``(input, output, cache_read, cache_write, cache_write_1h)``
 per 1M tokens:
   input        uncached prompt tokens, full rate
   output       generated tokens
-  cache_read   tokens served from cache (cheaper): Anthropic 0.1x input
-               (0.025x on Fable 5.1 and Mythos 5.1, 0.05x on Opus 5.5), OpenAI
-               its published cached-input rate
+  cache_read   tokens served from cache (cheaper): each vendor's published
+               cache-read / cached-input rate, which varies by model
   cache_write  standard writes: Anthropic 5-minute TTL and OpenAI's 30-minute
                TTL are 1.25x input.
   cache_write_1h  Anthropic's extended one-hour TTL, at 2x input.
