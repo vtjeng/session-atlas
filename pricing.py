@@ -24,7 +24,7 @@ never priced.
 site shows only the rates of models that a page's sessions used.
 """
 
-AS_OF = "2026-09-29"
+AS_OF = "2026-10-12"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
@@ -48,7 +48,7 @@ PRICES = {
     "claude-opus-4-0": (15.00, 75.00, 1.500, 18.75, 30.00),
     "claude-opus-4-20250514":
                          (15.00, 75.00, 1.500, 18.75, 30.00),
-    "claude-sonnet-5-5":(2.00, 10.00, 0.200,  2.50,  4.00),
+    "claude-sonnet-5-5":(2.00, 10.00, 0.100,  2.50,  4.00),
     "claude-sonnet-5": ( 2.00, 10.00, 0.200,  2.50,  4.00),
     "claude-sonnet-4-6":
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
@@ -60,6 +60,7 @@ PRICES = {
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
     "claude-sonnet-4-20250514":
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
+    "claude-haiku-5-5":( 0.10,  0.50, 0.010,  0.125, 0.20),
     "claude-haiku-4-5":( 1.00,  5.00, 0.100,  1.25,  2.00),
     "claude-haiku-4-5-20251001":
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
