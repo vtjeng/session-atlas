@@ -3,8 +3,9 @@
 Rates are US-dollar list prices per 1,000,000 tokens, current as of ``AS_OF``.
 They are estimates, not invoices: they use each vendor's standard published
 list rates (short-context, non-batch, no priority surcharge), ignore
-volume/enterprise discounts and long-context tiers, and drift whenever a vendor
-changes pricing. Update the table below (and ``AS_OF``) when rates move.
+volume/enterprise discounts and long-context tiers except where noted, and drift
+whenever a vendor changes pricing. Update the table below (and ``AS_OF``) when
+rates move.
 
 Each entry is ``(input, output, cache_read, cache_write, cache_write_1h)``
 per 1M tokens:
@@ -59,7 +60,8 @@ PRICES = {
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
     "claude-sonnet-4-20250514":
                          ( 3.00, 15.00, 0.300,  3.75,  6.00),
-    "claude-haiku-5-5":( 0.10,  0.50, 0.010,  0.125, 0.20),
+    # Use the >100K-token prompt rates for all Haiku 5.5 usage.
+    "claude-haiku-5-5":( 0.50,  2.50, 0.050,  0.625, 1.00),
     "claude-haiku-4-5":( 1.00,  5.00, 0.100,  1.25,  2.00),
     "claude-haiku-4-5-20251001":
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
