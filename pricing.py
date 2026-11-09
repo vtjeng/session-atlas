@@ -24,7 +24,7 @@ never priced.
 site shows only the rates of models that a page's sessions used.
 """
 
-AS_OF = "2026-09-29"
+AS_OF = "2026-11-09"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
