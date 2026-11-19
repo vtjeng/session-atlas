@@ -24,13 +24,16 @@ never priced.
 site shows only the rates of models that a page's sessions used.
 """
 
-AS_OF = "2026-10-12"
+AS_OF = "2026-11-19"
 
 # Anthropic: platform.claude.com/docs (standard rates).
 # OpenAI: developers.openai.com/api/docs/pricing (standard short-context rates).
 PRICES = {
+    "claude-fable-5-2":( 8.00, 40.00, 0.200, 10.00, 16.00),
     "claude-fable-5-1":(10.00, 50.00, 0.250, 12.50, 20.00),
     "claude-fable-5":  (10.00, 50.00, 1.000, 12.50, 20.00),
+    "claude-mythos-5-2":
+                         ( 8.00, 40.00, 0.200, 10.00, 16.00),
     "claude-mythos-5-1":
                          (10.00, 50.00, 0.250, 12.50, 20.00),
     "claude-mythos-5": (10.00, 50.00, 1.000, 12.50, 20.00),
@@ -67,7 +70,9 @@ PRICES = {
                          ( 1.00,  5.00, 0.100,  1.25,  2.00),
     "claude-3-5-haiku-20241022":
                          ( 0.80,  4.00, 0.080,  1.00,  1.60),
+    "gpt-6.2-astra":   ( 8.00, 40.00, 0.400, 10.00, None),
     "gpt-6-astra":     (10.00, 50.00, 1.000, 12.50, None),
+    "gpt-6.2-sol":     ( 2.00, 10.00, 0.100,  2.50, None),
     "gpt-6.1-sol":     ( 2.00, 10.00, 0.100,  2.50, None),
     "gpt-6-sol":       ( 2.00, 10.00, 0.200,  2.50, None),
     "gpt-6-luna":      ( 0.10,  0.50, 0.010,  0.125, None),
